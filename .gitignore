@@ -1,0 +1,4 @@
+node_modules/
+main.js
+*.tsbuildinfo
+.DS_Store

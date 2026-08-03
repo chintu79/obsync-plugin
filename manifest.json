@@ -1,0 +1,10 @@
+{
+  "id": "obsync",
+  "name": "Obsync",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Free, local-first P2P sync for your vault. No cloud, no account.",
+  "author": "Obsync contributors",
+  "authorUrl": "https://github.com/chintu79/obsync-plugin",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,33 @@
+/* Obsync plugin styles — minimal, matches the webui dark aesthetic. */
+
+.obsync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-ui-small);
+}
+
+.obsync-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.obsync-muted {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.obsync-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.obsync-row:last-child {
+  border-bottom: none;
+}

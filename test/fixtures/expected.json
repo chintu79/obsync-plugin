@@ -1,0 +1,30 @@
+{
+  ".hidden.md": {
+    "hex": "b64b092daa031989aac873ff37f36d67074d1cc10750c0e0632a7382017a3b24",
+    "size": 17
+  },
+  ".obsidian/config.json": {
+    "hex": "6e46dd10defc9b56c29a6ec56b508c21f54c08192194e4df25bf36f0c9c3c279",
+    "size": 2
+  },
+  "attachments/notes.txt": {
+    "hex": "06ce4214a481357d8d73df8d0b50307ec93e88a538dbe359e0fb4b756d6b3ea7",
+    "size": 21
+  },
+  "expected.json": {
+    "hex": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+    "size": 0
+  },
+  "notes/ideas.md": {
+    "hex": "e667d66cb5f61fa437a6f0804462a182fb30e93694b1de87ff857de71e1498f0",
+    "size": 31
+  },
+  "notes/tmp.swp": {
+    "hex": "d0de8d7f55a81ec88cea2d505cce6100c9e8ac788ef2f8676349d9318633633f",
+    "size": 4
+  },
+  "notes/welcome.md": {
+    "hex": "27577c8f12ca06b6ee4e0919e02a3422225284784b29009d55b2456eb98f483d",
+    "size": 37
+  }
+}
