@@ -142,12 +142,19 @@ export interface HttpServerHandle {
  * counterpart of `obsync-local-rest-api`'s approach. Each POST to /rpc is one
  * protocol message; the handler's response is the reply. Implemented on raw
  * `http` (not Express) to keep dependencies at zero for the plugin path.
+ *
+ * Uses a lazy `require("http")` (not dynamic `import`): Obsidian's renderer
+ * resolves ES dynamic imports as URLs, so `await import("node:http")` fails
+ * with "Failed to fetch dynamically imported module". `require` is Node-only
+ * and only ever evaluated on desktop (startRpcServer is never called on
+ * mobile), matching the obsidian-local-rest-api precedent.
  */
 export async function startRpcServer(
   handler: MessageHandler,
   port: number = DEFAULT_PORT
 ): Promise<HttpServerHandle> {
-  const http = await import("node:http");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const http = require("http") as typeof import("http");
   const server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== RPC_PATH) {
       res.writeHead(404).end();
