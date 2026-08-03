@@ -89,6 +89,9 @@ export class PairingServer {
   }
 
   async isApproved(deviceId: string): Promise<boolean> {
+    // The local engine is its own client when the desktop "Sync now" runs
+    // against 127.0.0.1 — never reject our own identity.
+    if (deviceId === this.identity.device_id) return true;
     await this.loadApproved();
     return this.approved.has(deviceId);
   }

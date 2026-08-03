@@ -5,6 +5,21 @@ export const DEFAULT_PORT = 42042;
 export const RPC_PATH = "/rpc";
 
 /**
+ * Make a user-entered server URL usable: trim whitespace, drop any trailing
+ * slash, and add `http://` when the user omitted the scheme (a common
+ * paste-into-the-field mistake — e.g. "10.174.223.140:42042"). Without a
+ * scheme, requestUrl throws "Failed to fetch"-style errors.
+ */
+export function normalizeServerUrl(raw: string): string {
+  let url = raw.trim();
+  if (!url) return url;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+  return url.replace(/\/+$/, "");
+}
+
+/**
  * The one network hop in the plugin path. The Rust engine uses a persistent
  * TCP socket with length-prefixed bincode frames; mobile Obsidian plugins can
  * only do HTTP (`requestUrl`), so each protocol message is a POST request whose

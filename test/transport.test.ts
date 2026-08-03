@@ -8,6 +8,7 @@ import {
   encodeMessage,
   decodeMessage,
   RPC_PATH,
+  normalizeServerUrl,
 } from "../src/core/transport";
 import { ProtocolMessage, newMessage } from "../src/core/protocol";
 
@@ -76,5 +77,29 @@ describe("transport", () => {
     const client = HttpClientTransport.forNode(url);
     const reply = await client.exchange(disconnectMessage());
     expect(reply.message_type).toBe("operation_ack");
+  });
+});
+
+describe("normalizeServerUrl", () => {
+  it("adds http:// when the scheme is missing", () => {
+    expect(normalizeServerUrl("10.174.223.140:42042")).toBe("http://10.174.223.140:42042");
+  });
+
+  it("keeps an explicit scheme", () => {
+    expect(normalizeServerUrl("http://10.174.223.140:42042")).toBe("http://10.174.223.140:42042");
+    expect(normalizeServerUrl("https://vault.example.com:8443")).toBe("https://vault.example.com:8443");
+  });
+
+  it("strips a trailing slash", () => {
+    expect(normalizeServerUrl("10.174.223.140:42042/")).toBe("http://10.174.223.140:42042");
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(normalizeServerUrl("  10.174.223.140:42042  ")).toBe("http://10.174.223.140:42042");
+  });
+
+  it("returns empty input unchanged", () => {
+    expect(normalizeServerUrl("")).toBe("");
+    expect(normalizeServerUrl("   ")).toBe("");
   });
 });

@@ -73,7 +73,33 @@ export class ObsyncSettingsTab extends PluginSettingTab {
           .setValue(this.svc.serverUrl)
           .onChange(async (v) => {
             await this.plugin.saveServerUrl(v.trim());
+            this.plugin.reschedulePoll();
           });
+      });
+
+    new Setting(containerEl)
+      .setName("Auto-sync")
+      .setDesc(
+        "Sync when files change and (on mobile) poll the server every interval. No more pressing Sync by hand."
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.autoSyncEnabled)
+          .onChange(async (v) => {
+            await this.plugin.setAutoSync(v);
+            this.display();
+          })
+      )
+      .addText((t) => {
+        t.setPlaceholder("30")
+          .setValue(String(this.plugin.autoSyncIntervalSec));
+        t.inputEl.style.width = "4em";
+        t.onChange(async (v) => {
+          const n = Number.parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 5) {
+            await this.plugin.setAutoSyncInterval(n);
+          }
+        });
       });
 
     new Setting(containerEl)

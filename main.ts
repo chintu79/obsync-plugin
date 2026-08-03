@@ -11,6 +11,7 @@ import {
   startRpcServer,
   HttpServerHandle,
   RPC_PATH,
+  normalizeServerUrl,
 } from "./src/core/transport";
 import { DeviceIdentity } from "./src/core/identity";
 import { ObsyncSettingsTab } from "./src/ui/settings-tab";
@@ -29,6 +30,12 @@ export default class ObsyncPlugin extends Plugin {
 
   /** Server URL configured in settings (mobile). */
   serverUrl = "";
+  /** Auto-sync on vault changes + periodic polling. */
+  autoSyncEnabled = true;
+  autoSyncIntervalSec = 30;
+  private syncInProgress = false;
+  private syncDebounce: number | null = null;
+  private pollTimer: number | null = null;
 
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
@@ -55,6 +62,8 @@ export default class ObsyncPlugin extends Plugin {
       await this.saveData({ identity: this.identity.toStored() });
     }
     if (saved?.serverUrl) this.serverUrl = saved.serverUrl;
+    if (typeof saved?.autoSyncEnabled === "boolean") this.autoSyncEnabled = saved.autoSyncEnabled;
+    if (typeof saved?.autoSyncIntervalSec === "number") this.autoSyncIntervalSec = saved.autoSyncIntervalSec;
 
     // Engine over the vault adapter + JSON store.
     const store = new Store(this.adapter);
@@ -71,6 +80,15 @@ export default class ObsyncPlugin extends Plugin {
       );
     }
 
+    // Auto-sync: vault edits trigger an immediate (debounced) session, and on
+    // mobile a periodic poll fetches remote changes (HTTP is request/response —
+    // there is no push channel, so the phone polls instead).
+    this.registerEvent(this.app.vault.on("create", () => this.scheduleAutoSync()));
+    this.registerEvent(this.app.vault.on("modify", () => this.scheduleAutoSync()));
+    this.registerEvent(this.app.vault.on("delete", () => this.scheduleAutoSync()));
+
+    this.reschedulePoll();
+
     this.addSettingTab(new ObsyncSettingsTab(this.app, this, this.serviceState()));
 
     new Notice(`Obsync ready (${this.identity.fingerprint()})`);
@@ -78,6 +96,43 @@ export default class ObsyncPlugin extends Plugin {
 
   onunload() {
     this.server?.close();
+    if (this.syncDebounce !== null) window.clearTimeout(this.syncDebounce);
+    if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
+  }
+
+  /** Re-arm the mobile poll timer after settings change / toggle. */
+  reschedulePoll(): void {
+    if (this.pollTimer !== null) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    if (!this.autoSyncEnabled || !Platform.isMobile) return;
+    this.pollTimer = window.setInterval(
+      () => void this.syncNow(true),
+      this.autoSyncIntervalSec * 1000
+    );
+  }
+
+  async setAutoSync(enabled: boolean): Promise<void> {
+    this.autoSyncEnabled = enabled;
+    await this.saveData({ ...(await this.loadData()), autoSyncEnabled: enabled });
+    this.reschedulePoll();
+  }
+
+  async setAutoSyncInterval(sec: number): Promise<void> {
+    this.autoSyncIntervalSec = sec;
+    await this.saveData({ ...(await this.loadData()), autoSyncIntervalSec: sec });
+    this.reschedulePoll();
+  }
+
+  /** Debounced auto-sync on vault file events. */
+  private scheduleAutoSync(): void {
+    if (!this.autoSyncEnabled || this.syncInProgress) return;
+    if (this.syncDebounce !== null) window.clearTimeout(this.syncDebounce);
+    this.syncDebounce = window.setTimeout(() => {
+      this.syncDebounce = null;
+      void this.syncNow(true);
+    }, 1500);
   }
 
   vaultAdapter(): VaultAdapter | null {
@@ -98,8 +153,8 @@ export default class ObsyncPlugin extends Plugin {
   }
 
   async saveServerUrl(url: string): Promise<void> {
-    this.serverUrl = url;
-    await this.saveData({ ...(await this.loadData()), serverUrl: url });
+    this.serverUrl = normalizeServerUrl(url);
+    await this.saveData({ ...(await this.loadData()), serverUrl: this.serverUrl });
   }
 
   async toggleServer(): Promise<void> {
@@ -121,17 +176,22 @@ export default class ObsyncPlugin extends Plugin {
     }
   }
 
-  async syncNow(): Promise<void> {
+  async syncNow(quiet = false): Promise<void> {
     if (!this.engine || !this.adapter || !this.identity) return;
-
-    if (Platform.isMobile) {
-      await this.mobileSync();
-      return;
+    if (this.syncInProgress) return;
+    this.syncInProgress = true;
+    try {
+      if (Platform.isMobile) {
+        await this.mobileSync(quiet);
+      } else {
+        await this.desktopSync(quiet);
+      }
+    } finally {
+      this.syncInProgress = false;
     }
-    await this.desktopSync();
   }
 
-  private async desktopSync(): Promise<void> {
+  private async desktopSync(quiet: boolean): Promise<void> {
     if (!this.engine || !this.server) {
       new Notice("Obsync: start the server first (Settings → Obsync).");
       return;
@@ -144,22 +204,24 @@ export default class ObsyncPlugin extends Plugin {
     try {
       const report = await runClientSession(this.engine, transport);
       this.statusBarItem?.setText("Obsync: up to date");
-      new Notice(
-        `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
-      );
+      if (!quiet) {
+        new Notice(
+          `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
+        );
+      }
     } catch (e) {
       this.statusBarItem?.setText("Obsync: error");
-      new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
+      if (!quiet) new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
     }
   }
 
-  private async mobileSync(): Promise<void> {
+  private async mobileSync(quiet: boolean): Promise<void> {
     if (!this.engine || !this.identity) return;
     if (!this.serverUrl) {
-      new Notice("Obsync: set the desktop server URL in settings.");
+      if (!quiet) new Notice("Obsync: set the desktop server URL in settings.");
       return;
     }
-    const url = `${this.serverUrl}${RPC_PATH}`;
+    const url = `${normalizeServerUrl(this.serverUrl)}${RPC_PATH}`;
     const transport = new RequestUrlTransport(url, (param) => {
       return requestUrl({
         url: param.url,
@@ -180,7 +242,7 @@ export default class ObsyncPlugin extends Plugin {
       newMessage("pair_request", 0, pair.buildPairRequest())
     );
     if (pairReply.message_type === "pair_ack" && !(pairReply.payload as { approved: boolean }).approved) {
-      new Notice("Obsync: device not approved by the desktop. Ask the desktop user to approve.");
+      if (!quiet) new Notice("Obsync: device not approved by the desktop. Ask the desktop user to approve.");
       return;
     }
 
@@ -190,12 +252,14 @@ export default class ObsyncPlugin extends Plugin {
     try {
       const report = await runClientSession(this.engine, transport);
       this.statusBarItem?.setText("Obsync: up to date");
-      new Notice(
-        `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
-      );
+      if (!quiet) {
+        new Notice(
+          `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
+        );
+      }
     } catch (e) {
       this.statusBarItem?.setText("Obsync: error");
-      new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
+      if (!quiet) new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
     }
   }
 }
