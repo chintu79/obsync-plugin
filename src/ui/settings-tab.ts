@@ -6,7 +6,7 @@ import { SyncServer } from "../core/session";
 import { HttpClientTransport, startRpcServer, HttpServerHandle } from "../core/transport";
 import { ObsidianVaultAdapter } from "../obsidian-adapter";
 import { Store } from "../core/store";
-import { listSnapshots, restoreSnapshot } from "../core/versioning";
+import { listAllSnapshots, restoreSnapshot } from "../core/versioning";
 import { PairingServer } from "../core/pairing";
 
 interface ServiceState {
@@ -168,7 +168,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "Engine not started.", cls: "obsync-muted" });
       return;
     }
-    const snaps = await listSnapshots(adapter, "notes/example.md");
+    const snaps = await listAllSnapshots(adapter);
     if (snaps.length === 0) {
       containerEl.createEl("p", {
         text: "No snapshots yet (created on overwrite during sync).",
@@ -176,7 +176,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       });
       return;
     }
-    for (const s of snaps.slice(0, 10)) {
+    for (const s of snaps.slice(0, 20)) {
       new Setting(containerEl)
         .setName(s.relative_path)
         .setDesc(`${new Date(s.timestamp).toLocaleString()} · ${s.size} bytes`)

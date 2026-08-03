@@ -25,12 +25,22 @@ export default class ObsyncPlugin extends Plugin {
   private adapter: ObsidianVaultAdapter | null = null;
   private syncServer: SyncServer | null = null;
   private pairing: PairingServer | null = null;
+  private statusBarItem: { setText: (text: string) => void } | null = null;
 
   /** Server URL configured in settings (mobile). */
   serverUrl = "";
 
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
+
+    this.addCommand({
+      id: "sync-now",
+      name: "Sync now",
+      callback: () => this.syncNow(),
+    });
+
+    this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.setText("Obsync: idle");
 
     this.adapter = new ObsidianVaultAdapter(this.app.vault);
 
@@ -130,10 +140,17 @@ export default class ObsyncPlugin extends Plugin {
     await this.engine.refreshIndex(true);
     const url = `http://127.0.0.1:${this.server.port}${RPC_PATH}`;
     const transport = HttpClientTransport.forNode(url);
-    const report = await runClientSession(this.engine, transport);
-    new Notice(
-      `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
-    );
+    this.statusBarItem?.setText("Obsync: syncing…");
+    try {
+      const report = await runClientSession(this.engine, transport);
+      this.statusBarItem?.setText("Obsync: up to date");
+      new Notice(
+        `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
+      );
+    } catch (e) {
+      this.statusBarItem?.setText("Obsync: error");
+      new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   private async mobileSync(): Promise<void> {
@@ -169,9 +186,16 @@ export default class ObsyncPlugin extends Plugin {
 
     // Mobile is additive: never tombstone phantom deletions.
     await this.engine.refreshIndex(false);
-    const report = await runClientSession(this.engine, transport);
-    new Notice(
-      `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
-    );
+    this.statusBarItem?.setText("Obsync: syncing…");
+    try {
+      const report = await runClientSession(this.engine, transport);
+      this.statusBarItem?.setText("Obsync: up to date");
+      new Notice(
+        `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
+      );
+    } catch (e) {
+      this.statusBarItem?.setText("Obsync: error");
+      new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
+    }
   }
 }
