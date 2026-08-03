@@ -6,7 +6,6 @@ import { SyncServer, runClientSession } from "./src/core/session";
 import { PairingClient, PairingServer } from "./src/core/pairing";
 import { newMessage } from "./src/core/protocol";
 import {
-  HttpClientTransport,
   RequestUrlTransport,
   startRpcServer,
   HttpServerHandle,
@@ -199,7 +198,21 @@ export default class ObsyncPlugin extends Plugin {
     // Desktop is authoritative: deletions are tombstoned.
     await this.engine.refreshIndex(true);
     const url = `http://127.0.0.1:${this.server.port}${RPC_PATH}`;
-    const transport = HttpClientTransport.forNode(url);
+    // Use requestUrl (not global fetch): Obsidian's renderer has no reliable
+    // fetch for loopback, and requestUrl works identically on desktop + mobile.
+    const transport = new RequestUrlTransport(url, (param) => {
+      return requestUrl({
+        url: param.url,
+        method: param.method,
+        contentType: param.contentType,
+        body: param.body,
+        throw: false,
+      }) as unknown as Promise<{
+        status: number;
+        text: string;
+        arrayBuffer: ArrayBuffer;
+      }>;
+    });
     this.statusBarItem?.setText("Obsync: syncing…");
     try {
       const report = await runClientSession(this.engine, transport);

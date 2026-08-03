@@ -36,6 +36,7 @@ export class ObsidianVaultAdapter implements VaultAdapter {
 
   async write(path: string, data: Uint8Array | string): Promise<void> {
     const p = normalizePath(path);
+    await this.ensureParent(p);
     if (typeof data === "string") {
       await this.adapter.write(p, data);
     } else {
@@ -44,6 +45,20 @@ export class ObsidianVaultAdapter implements VaultAdapter {
         data.byteOffset + data.byteLength
       ) as ArrayBuffer;
       await this.adapter.writeBinary(p, buf);
+    }
+  }
+
+  /**
+   * Obsidian's DataAdapter.write/writeBinary throw "Parent folder doesn't
+   * exist" when the file's directory is missing (e.g. a pull creating
+   * "notes/sub/a.md" before "notes/sub/" exists). Create it first.
+   */
+  private async ensureParent(path: string): Promise<void> {
+    const idx = path.lastIndexOf("/");
+    if (idx <= 0) return;
+    const parent = path.slice(0, idx);
+    if (!(await this.adapter.exists(parent))) {
+      await this.mkdir(parent);
     }
   }
 
