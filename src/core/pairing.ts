@@ -34,6 +34,7 @@ interface ApprovedDevice {
 
 export class PairingServer {
   private approved = new Map<string, ApprovedDevice>();
+  private pending = new Map<string, PairRequestPayload>();
   private loaded = false;
 
   constructor(
@@ -71,17 +72,20 @@ export class PairingServer {
       fingerprint: req.fingerprint,
       approved_at: Date.now(),
     });
+    this.pending.delete(req.device_id);
     await this.saveApproved();
   }
 
   async rejectDevice(deviceId: string): Promise<void> {
     await this.loadApproved();
     this.approved.delete(deviceId);
+    this.pending.delete(deviceId);
     await this.saveApproved();
   }
 
+  /** Devices that have requested pairing but are not approved yet. */
   async pendingDevices(): Promise<PairRequestPayload[]> {
-    return []; // desktop UI collects pair_requests; kept for API parity
+    return [...this.pending.values()];
   }
 
   async isApproved(deviceId: string): Promise<boolean> {
@@ -103,6 +107,7 @@ export class PairingServer {
     if (msg.message_type === "pair_request") {
       const req = msg.payload as PairRequestPayload;
       const approved = await this.isApproved(req.device_id);
+      if (!approved) this.pending.set(req.device_id, req);
       const payload: PairAckPayload = {
         approved,
         server_device_id: this.identity.device_id,

@@ -96,6 +96,38 @@ describe("pairing", () => {
     expect((reply.payload as { server_public_key: string }).server_public_key).toBeTruthy();
   });
 
+  it("pair_request shows up as pending until the desktop approves (real flow)", async () => {
+    const pair = new PairingClient(mobileIdentity);
+    const client = HttpClientTransport.forNode(url);
+
+    // 1. Phone taps Sync now → pair_request → rejected but recorded as pending.
+    const reply = await client.exchange(
+      newMessage("pair_request", 2, pair.buildPairRequest())
+    );
+    expect((reply.payload as { approved: boolean }).approved).toBe(false);
+
+    // 2. Desktop settings tab reads the pending request.
+    const pending = await pairingServer.pendingDevices();
+    expect(pending.map((p) => p.device_id)).toContain(mobileIdentity.device_id);
+
+    // 3. Desktop clicks Approve.
+    await pairingServer.approveDevice(pending.find((p) => p.device_id === mobileIdentity.device_id)!);
+
+    // 4. Phone's next pair_request is approved, then sync succeeds.
+    const reply2 = await client.exchange(
+      newMessage("pair_request", 3, pair.buildPairRequest())
+    );
+    expect((reply2.payload as { approved: boolean }).approved).toBe(true);
+    expect(await pairingServer.pendingDevices()).toEqual([]);
+
+    const clientVault = await makeVault(mobileIdentity.device_id, {});
+    const report = await runClientSession(clientVault.engine, client, {
+      device_id: mobileIdentity.device_id,
+      device_name: mobileIdentity.device_name,
+    });
+    expect(report.pulled_files).toBe(1);
+  });
+
   it("approves a device, persists approval, and then syncs over the RPC server", async () => {
     const pair = new PairingClient(mobileIdentity);
     const req = pair.buildPairRequest();

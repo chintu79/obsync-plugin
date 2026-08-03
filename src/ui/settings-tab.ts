@@ -101,14 +101,34 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       });
       return;
     }
+    const pending = await pairing.pendingDevices();
+    if (pending.length > 0) {
+      containerEl.createEl("h4", { text: "Awaiting approval" });
+      for (const p of pending) {
+        new Setting(containerEl)
+          .setName(`${p.device_name} wants to pair`)
+          .setDesc(`${p.fingerprint} · device ${p.device_id.slice(0, 8)}`)
+          .addButton((b) =>
+            b
+              .setButtonText("Approve")
+              .setCta()
+              .onClick(async () => {
+                await pairing.approveDevice(p);
+                this.display();
+              })
+          );
+      }
+    }
+
     const devices = await pairing.approvedList();
     if (devices.length === 0) {
       containerEl.createEl("p", {
-        text: "No approved devices. Sync from your phone to pair.",
+        text: "No approved devices yet. From your phone: Settings → Obsync → Sync now, then approve it here.",
         cls: "obsync-muted",
       });
       return;
     }
+    containerEl.createEl("h4", { text: "Approved devices" });
     for (const d of devices) {
       new Setting(containerEl)
         .setName(d.device_name)

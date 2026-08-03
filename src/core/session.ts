@@ -151,6 +151,9 @@ export class SyncServer {
     switch (msg.message_type) {
       case "hello": {
         // No pairing gate here — PairingServer wraps this to gate approvals.
+        // Server is authoritative: refresh the index so files edited directly
+        // on disk reach the client this session (matches the Rust engine).
+        await this.engine.refreshIndex(true);
         return newMessage("hello_ack", msg.request_id, {
           approved: true,
           server_device_id: this.engine.deviceIdValue(),
