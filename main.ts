@@ -77,6 +77,19 @@ export default class ObsyncPlugin extends Plugin {
         this.identity,
         this.syncServer
       );
+      // Desktop is authoritative and must always be reachable — auto-start the
+      // sync server instead of requiring a manual click in Settings.
+      if (!this.server) {
+        const pairing = this.pairing;
+        try {
+          this.server = await startRpcServer(
+            (msg) => pairing.handle(msg),
+            DEFAULT_PORT
+          );
+        } catch (e) {
+          console.warn("obsync: could not auto-start server:", e);
+        }
+      }
     }
 
     // Auto-sync: vault edits trigger an immediate (debounced) session, and on
