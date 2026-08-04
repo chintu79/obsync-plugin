@@ -123,6 +123,15 @@ export class PairingServer {
     if (msg.message_type === "hello") {
       const hello = msg.payload as HelloPayload;
       const approved = await this.isApproved(hello.device_id);
+      // This wrapper answers hello, so SyncServer's own hello branch — which
+      // refreshes the index so files written directly to the server's disk
+      // reach the client this session — is unreachable. Run it explicitly
+      // (its reply is discarded in favor of the pairing-gated ack below).
+      try {
+        await this.syncServer.handle(msg);
+      } catch (e) {
+        console.warn(`obsync: hello refresh failed: ${e instanceof Error ? e.message : e}`);
+      }
       const payload: HelloAckPayload = {
         approved,
         server_device_id: this.identity.device_id,

@@ -23,6 +23,16 @@ export function shouldIgnore(path: string): boolean {
   if (IGNORED_SUFFIXES.some((s) => name.endsWith(s))) return true;
   if (IGNORED_PREFIXES.some((p) => name.startsWith(p))) return true;
 
+  // The plugin's own install folder must never sync: it holds the device
+  // identity (private key), and both devices rewrite their own copy, so it
+  // conflicts forever and can exhaust conflict-copy names.
+  if (
+    path === ".obsidian/plugins/obsync" ||
+    path.startsWith(".obsidian/plugins/obsync/")
+  ) {
+    return true;
+  }
+
   for (const part of parts) {
     if (part.startsWith(".") && part.length > 1 && part !== ".obsidian") {
       return true;

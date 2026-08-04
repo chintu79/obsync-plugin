@@ -59,63 +59,100 @@ export async function runClientSession(
   const localMap = new Map(local.files.map((f) => [f.relative_path, f]));
   const remoteMap = new Map(remote.files.map((f) => [f.relative_path, f]));
   const remoteTombstones = new Set(remote.tombstones.map((t) => t.relative_path));
-  const localTombstones = new Set(local.tombstones.map((t) => t.relative_path));
+  const localTombstones = new Map(local.tombstones.map((t) => [t.relative_path, t]));
 
   const report: SyncReport = { pulled_files: 0, pushed_files: 0, deleted_files: 0, conflicts: 0 };
   let requestId = 1;
 
-  // 3. Pull: files on server that we don't have (or differ, server newer)
+  // 3. Pull: files on server that we don't have (or differ, server newer).
+  // Each file is isolated so a single failure (e.g. a chronically-conflicting
+  // path that exhausts conflict-copy names) cannot abort the session and
+  // starve every other file — a new note must still reach the device even if
+  // one .obsidian settings file keeps failing.
   for (const [path, rf] of remoteMap) {
-    const lf = localMap.get(path);
-    if (!lf) {
-      if (localTombstones.has(path)) continue;
-      await pullFile(engine, transport, path, rf, () => requestId++);
-      report.pulled_files += 1;
-    } else if (!bytesEq(lf.content_hash, rf.content_hash)) {
-      const outcome = resolveDivergence(lf, rf);
-      if (outcome === SideOutcome.Conflict) {
-        const copy = await engine.planConflictCopy(path, rf.content_hash, true);
-        if (copy) {
-          const size = await pullFileTo(engine, transport, path, rf, copy, () => requestId++);
-          await engine.recordRemoteFile(copy, rf.content_hash, size, rf.modified_at);
+    try {
+      const lf = localMap.get(path);
+      if (!lf) {
+        const lt = localTombstones.get(path);
+        if (lt) {
+          // We deleted this locally at some point. Our deletion only beats a
+          // remote file that still matches the version we last agreed on
+          // (agreed_hash). If the remote changed the file after we last saw it
+          // — even a single millisecond after our tombstone, which wall-clock
+          // comparisons can't tell apart — the edit wins: pull it back, which
+          // also retires our stale tombstone so step 6 never re-deletes it.
+          // Pre-upgrade tombstones (no agreed_hash) fall back to a strict
+          // deleted_at > modified_at comparison.
+          const stillAgreed =
+            lt.agreed_hash !== null &&
+            lt.agreed_hash !== undefined &&
+            bytesEq(lt.agreed_hash, rf.content_hash);
+          if (stillAgreed) continue;
+          if (!lt.agreed_hash && lt.deleted_at > rf.modified_at) continue;
+          localTombstones.delete(path);
         }
-        report.conflicts += 1;
-      } else if (outcome === SideOutcome.LocalWins) {
-        await pushFile(engine, transport, path, lf, () => requestId++);
-        report.pushed_files += 1;
-      } else {
         await pullFile(engine, transport, path, rf, () => requestId++);
         report.pulled_files += 1;
+      } else if (!bytesEq(lf.content_hash, rf.content_hash)) {
+        const outcome = resolveDivergence(lf, rf);
+        if (outcome === SideOutcome.Conflict) {
+          const copy = await engine.planConflictCopy(path, rf.content_hash, true);
+          if (copy) {
+            const size = await pullFileTo(engine, transport, path, rf, copy, () => requestId++);
+            await engine.recordRemoteFile(copy, rf.content_hash, size, rf.modified_at);
+          }
+          report.conflicts += 1;
+        } else if (outcome === SideOutcome.LocalWins) {
+          await pushFile(engine, transport, path, lf, () => requestId++);
+          report.pushed_files += 1;
+        } else {
+          await pullFile(engine, transport, path, rf, () => requestId++);
+          report.pulled_files += 1;
+        }
       }
+    } catch (e) {
+      console.warn(`obsync: skipping pull of ${path}: ${e instanceof Error ? e.message : e}`);
     }
   }
 
   // 4. Push: files only on local
   for (const [path, lf] of localMap) {
     if (!remoteMap.has(path) && !remoteTombstones.has(path)) {
-      await pushFile(engine, transport, path, lf, () => requestId++);
-      report.pushed_files += 1;
+      try {
+        await pushFile(engine, transport, path, lf, () => requestId++);
+        report.pushed_files += 1;
+      } catch (e) {
+        console.warn(`obsync: skipping push of ${path}: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 
   // 5. Deletes: remote tombstones → delete locally
   for (const path of remoteTombstones) {
     if (localMap.has(path)) {
-      await engine.applyOperation({ op: "delete", path });
-      report.deleted_files += 1;
+      try {
+        await engine.applyOperation({ op: "delete", path });
+        report.deleted_files += 1;
+      } catch (e) {
+        console.warn(`obsync: skipping delete of ${path}: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 
   // 6. Push local tombstones → tell server to delete
-  for (const path of localTombstones) {
+  for (const path of localTombstones.keys()) {
     if (remoteMap.has(path)) {
-      const payload: SyncOperationPayload = {
-        operation_type: 2,
-        relative_path: path,
-        size: 0,
-        modified_at: 0,
-      };
-      await transport.exchange(newMessage("sync_operation", requestId++, payload));
+      try {
+        const payload: SyncOperationPayload = {
+          operation_type: 2,
+          relative_path: path,
+          size: 0,
+          modified_at: 0,
+        };
+        await transport.exchange(newMessage("sync_operation", requestId++, payload));
+      } catch (e) {
+        console.warn(`obsync: skipping tombstone for ${path}: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 

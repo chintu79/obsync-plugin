@@ -5,8 +5,7 @@
 **Free, local-first P2P sync for your Obsidian vault. No cloud. No account. No subscription.**
 
 Sync your Obsidian vault between your laptop and your phone over your own
-network — encrypted, direct, and private. Your notes never touch a third-party
-server.
+network — direct and private. Your notes never touch a third-party server.
 
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
@@ -20,7 +19,7 @@ Obsidian Sync costs **$4/month** and sends your vault through Obsidian's cloud.
 Obsync is an alternative that keeps your notes on your devices:
 
 - **No cloud, no accounts** — devices talk directly over your LAN.
-- **Encrypted P2P transport** — a dedicated sync protocol on your own network.
+- **Direct P2P transport** — a dedicated sync protocol on your own network.
 - **Pairing by fingerprint** — approve each device once; no passwords to share.
 - **Conflict detection** — files edited on both sides are flagged, never silently clobbered.
 - **Local-first** — your vault stays an ordinary folder on disk. No lock-in; leave anytime.
@@ -43,82 +42,90 @@ are surfaced as conflicts you resolve in the settings tab.
 
 ### Architecture
 
-```mermaid
-flowchart LR
-    subgraph Laptop["Laptop (authoritative)"]
-        OBS["Obsidian app"]
-        PLUG["Obsync plugin"]
-        SRV["RPC server<br/>port 42042"]
-        ENG["Sync engine<br/>+ index (.obsync/index.json)"]
-        VAULT["Vault folder"]
-        OBS --> PLUG
-        PLUG --> SRV
-        PLUG --> ENG
-        ENG --> VAULT
-    end
-
-    subgraph Phone["Phone (additive client)"]
-        POBS["Obsidian app"]
-        PPLUG["Obsync plugin"]
-        PENG["Sync engine<br/>+ index (.obsync/index.json)"]
-        PVAULT["Vault folder"]
-        POBS --> PPLUG
-        PPLUG --> PENG
-        PENG --> PVAULT
-    end
-
-    SRV <-->|"HTTP /rpc (requestUrl)"| PPLUG
-
-    style SRV fill:#2d6a4f,color:#fff
+```text
+Laptop (authoritative)                  Phone (additive client)
+┌──────────────────────────────────┐    ┌───────────────────────────────┐
+│ Obsidian app                     │    │ Obsidian app                  │
+│  └─ Obsync plugin                │    │  └─ Obsync plugin             │
+│      ├─ RPC server  :42042       │    │      └─ HTTP client           │
+│      └─ Sync engine              │    │      └─ Sync engine           │
+│          └─ .obsync/index.json   │    │          └─ .obsync/index.json│
+│          └─ Vault folder         │    │          └─ Vault folder      │
+└──────────────────────────────────┘    └───────────────────────────────┘
+              │            ▲                    │            ▲
+              └────────────┴────────────────────┴────────────┘
+                           HTTP /rpc (requestUrl)
 ```
+
+The laptop runs an RPC server on port `42042`; the phone (and the laptop's own
+"Sync now") talk to it over plain HTTP `POST /rpc` — one protocol message per
+request, the reply is the next message.
 
 ### Pairing a new device
 
-```mermaid
-sequenceDiagram
-    participant P as Phone (client)
-    participant S as Laptop (server)
-
-    P->>S: pair_request (device_id, fingerprint, name)
-    S-->>S: record as pending (not approved)
-    S-->>P: pair_ack { approved: false }
-    Note over S: Laptop user clicks "Approve"<br/>in Settings → Obsync → Devices
-    S-->>S: device added to .obsync/approved.json
-    P->>S: sync-now → pair_request again
-    S-->>P: pair_ack { approved: true }
-    P->>S: hello (device_id)
-    S-->>P: hello_ack { approved: true }
-    Note over P,S: full sync session follows
+```text
+ Phone (client)                                Laptop (server)
+      │ 1. pair_request (device_id, fingerprint, name)           │
+      │─────────────────────────────────────────────────────────►│
+      │ 2. pair_ack { approved: false }          device recorded │
+      │◄─────────────────────────────────────────────────────────│  as pending
+      │                                                          │
+      │         3. Laptop user clicks "Approve"                  │
+      │                device → .obsync/approved.json           │
+      │                                                          │
+      │ 4. pair_request (same device)                           │
+      │─────────────────────────────────────────────────────────►│
+      │ 5. pair_ack { approved: true }                          │
+      │◄─────────────────────────────────────────────────────────│
+      │ 6. hello (device_id)                                    │
+      │─────────────────────────────────────────────────────────►│
+      │ 7. hello_ack { approved: true }                         │
+      │◄─────────────────────────────────────────────────────────│
+      │ 8. full sync session follows                            │
 ```
 
 ### One sync session
 
-```mermaid
-sequenceDiagram
-    participant C as Client (phone or laptop)
-    participant S as Server (laptop)
-
-    C->>S: hello
-    S-->>S: refresh index (authoritative re-scan)
-    S-->>C: hello_ack { approved }
-    C->>S: manifest (client's file states)
-    S-->>C: manifest (server's file states)
-    Note over C,S: diff: pull files server has,<br/>push files client has,<br/>apply tombstones (client pulls only)
-    C->>S: file_request (path, offset)
-    S-->>C: file_chunk (base64, is_last)
-    C->>S: sync_operation (create/update/delete)
-    S-->>C: operation_ack
-    C->>S: disconnect
+```text
+ Client (phone or laptop)                       Server (laptop)
+      │ 1. hello                                              │
+      │────────────────────────────────────────────────────────►│
+      │                               2. refresh index (authoritative)
+      │◄────────────────────────────────────────────────────────│ 3. hello_ack { approved }
+      │ 4. manifest (client file states)                       │
+      │────────────────────────────────────────────────────────►│
+      │◄────────────────────────────────────────────────────────│ 5. manifest (server file states)
+      │                   6. diff → pull / push / delete       │
+      │ 7. file_request (path, offset)                         │
+      │────────────────────────────────────────────────────────►│
+      │◄────────────────────────────────────────────────────────│ 8. file_chunk (base64, is_last)
+      │ 9. sync_operation (create / update / delete)           │
+      │────────────────────────────────────────────────────────►│
+      │◄────────────────────────────────────────────────────────│ 10. operation_ack
+      │ 11. disconnect                                         │
 ```
+
+Step 6 is where the client decides what to do with each file: pull files the
+server has, push files only the client has, and apply tombstones. Every
+step that touches a single file is isolated — a chronically-conflicting file
+cannot stall the rest of the session.
 
 ### Conflict resolution
 
-```mermaid
-flowchart TD
-    A["File differs on both sides"] --> B{"Did either side<br/>change since last<br/>agreed sync hash?"}
-    B -- "No" --> C["Use newer mtime<br/>(pre-v2 fallback)"]
-    B -- "Both changed" --> D["Conflict!"]
-    D --> E["Settings → Obsync → Conflicts<br/>Keep local / Keep remote / Keep both"]
+```text
+   File differs on both sides
+              │
+              ▼
+ Did either side change since the last agreed sync hash?
+              │
+      ┌───────┴────────┐
+      ▼                ▼
+    "No"             "Both changed"
+      │                │
+      ▼                ▼
+  newer mtime wins    CONFLICT
+  (no agreement,      → Settings → Obsync → Conflicts
+   pre-v2 fallback)     Keep local / Keep remote / Keep both
 ```
 
 > **Conflict model:** revisions are per-device counters and are *not* a reliable
@@ -161,7 +168,7 @@ Both are gated by a `syncInProgress` guard so sessions never overlap. See
 ```bash
 npm install
 npm run build      # tsc typecheck + esbuild bundle → main.js
-npm test           # vitest (90 tests: engine, sync, store, scanner, crypto, pairing…)
+npm test           # vitest (93 tests: engine, sync, store, scanner, crypto, pairing…)
 ```
 
 The engine is a TypeScript port of the Rust sync engine in

@@ -67,7 +67,7 @@ describe("compareManifests", () => {
     const local = manifest("L", 2);
     const remote = manifest("R", 2);
     local.files.push(newFileState("gone.md", hash(1), 10, 100, 1));
-    const t: Tombstone = { relative_path: "gone.md", revision: 2, deleted_at: 300 };
+    const t: Tombstone = { relative_path: "gone.md", revision: 2, deleted_at: 300, agreed_hash: null };
     remote.tombstones.push(t);
     const diff = compareManifests(local, remote);
     expect(diff.operations.some((o) => o.op === "delete" && o.path === "gone.md")).toBe(true);

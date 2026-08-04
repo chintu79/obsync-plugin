@@ -44,7 +44,7 @@ describe("store", () => {
 
   it("tombstones", async () => {
     const { store } = makeStore();
-    const t: Tombstone = { relative_path: "dead.md", revision: 5, deleted_at: 1000 };
+    const t: Tombstone = { relative_path: "dead.md", revision: 5, deleted_at: 1000, agreed_hash: null };
     await store.upsertTombstone(t);
     const tombstones = await store.getTombstones();
     expect(tombstones.length).toBe(1);
@@ -64,7 +64,7 @@ describe("store", () => {
     const f = newFileState("notes/persist.md", testHash(), 55, 2000, 7);
     f.synced_hash = testHash();
     await s1.upsertFileState(f);
-    await s1.upsertTombstone({ relative_path: "gone.md", revision: 2, deleted_at: 300 });
+    await s1.upsertTombstone({ relative_path: "gone.md", revision: 2, deleted_at: 300, agreed_hash: null });
     await s1.recordConflict("c.md", testHash(), new Uint8Array(32).fill(1));
 
     const s2 = new Store(vault);

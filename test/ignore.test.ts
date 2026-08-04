@@ -27,6 +27,14 @@ describe("shouldIgnore", () => {
     expect(shouldIgnore("thumbs.db")).toBe(true);
   });
 
+  it("ignores the obsync plugin's own folder (device identity lives there)", () => {
+    expect(shouldIgnore(".obsidian/plugins/obsync/data.json")).toBe(true);
+    expect(shouldIgnore(".obsidian/plugins/obsync/main.js")).toBe(true);
+    expect(shouldIgnore(".obsidian/plugins/obsync")).toBe(true);
+    // Other plugins are still synced (matches Rust: test_not_ignore_obsidian_dir).
+    expect(shouldIgnore(".obsidian/plugins/other/data.json")).toBe(false);
+  });
+
   it("keeps normal files", () => {
     expect(shouldIgnore("notes.md")).toBe(false);
     expect(shouldIgnore("project.md")).toBe(false);

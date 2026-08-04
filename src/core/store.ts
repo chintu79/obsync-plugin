@@ -36,6 +36,7 @@ interface SerializedTombstone {
   relative_path: string;
   revision: number;
   deleted_at: number;
+  agreed_hash: string | null;
 }
 
 interface SerializedConflict {
@@ -149,7 +150,12 @@ export class Store {
       this.files.set(f.relative_path, f);
     }
     for (const t of data.tombstones ?? []) {
-      this.tombstones.set(t.relative_path, t);
+      this.tombstones.set(t.relative_path, {
+        relative_path: t.relative_path,
+        revision: t.revision,
+        deleted_at: t.deleted_at,
+        agreed_hash: deserializeHash(t.agreed_hash ?? null),
+      });
     }
     this.conflicts = (data.conflicts ?? []).map((c) => ({
       id: c.id,
@@ -182,7 +188,12 @@ export class Store {
     const data: SerializedIndex = {
       schema: 2,
       file_states: [...this.files.values()].map(stateToSerialized),
-      tombstones: [...this.tombstones.values()],
+      tombstones: [...this.tombstones.values()].map((t) => ({
+        relative_path: t.relative_path,
+        revision: t.revision,
+        deleted_at: t.deleted_at,
+        agreed_hash: serializeHash(t.agreed_hash ?? null),
+      })),
       conflicts: this.conflicts.map((c) => ({
         id: c.id,
         relative_path: c.relative_path,
@@ -208,6 +219,11 @@ export class Store {
   async upsertFileState(state: FileState): Promise<void> {
     await this.load();
     this.files.set(state.relative_path, { ...state });
+    // A file state and a tombstone for the same path must never coexist: a
+    // tombstone means "deleted", so recording the file again (a pull, a push
+    // landing, or the file reappearing on disk) retires the tombstone.
+    // Otherwise the stale tombstone re-deletes the file on the next session.
+    this.tombstones.delete(state.relative_path);
     await this.persist();
   }
 

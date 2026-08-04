@@ -155,6 +155,13 @@ export class SyncEngine {
       const candidate = joinPath(dirOf(base), name);
       if (!(await this.vault.exists(candidate))) return candidate;
     }
+
+    // All 16 hash-suffixed names are taken (a chronically-conflicting path).
+    // Fall back to a timestamped name so the conflict still lands instead of
+    // bailing and letting the caller abort the session.
+    const stamped = joinPath(dirOf(base), `${stem}-${nowMillis()}${ext}`);
+    if (!(await this.vault.exists(stamped))) return stamped;
+
     throw new Error(`could not allocate a conflict copy name for ${path}`);
   }
 
@@ -250,6 +257,7 @@ export class SyncEngine {
           relative_path: state.relative_path,
           revision: this.revisionCounter,
           deleted_at: nowMillis(),
+          agreed_hash: state.synced_hash ?? state.content_hash,
         });
       }
       // else: missing from disk but not authoritative — leave as-is
@@ -353,12 +361,14 @@ export class SyncEngine {
     if (await this.vault.exists(path)) {
       await this.vault.remove(path);
     }
+    const state = await this.store.getFileState(path);
     await this.store.deleteFileState(path);
     this.revisionCounter += 1;
     await this.store.upsertTombstone({
       relative_path: path,
       revision: this.revisionCounter,
       deleted_at: nowMillis(),
+      agreed_hash: state ? (state.synced_hash ?? state.content_hash) : null,
     });
   }
 

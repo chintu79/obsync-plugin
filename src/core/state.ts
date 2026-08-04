@@ -26,6 +26,15 @@ export interface Tombstone {
   relative_path: string;
   revision: RevisionId;
   deleted_at: number;
+  /**
+   * The content hash the deleting side had last agreed on for this path
+   * (the file state's synced_hash, falling back to its content_hash). A
+   * tombstone only beats a remote file that still matches this hash — if the
+   * remote changed the file after we last saw it, the edit wins and the file
+   * is pulled back. Absent (pre-upgrade tombstones), callers fall back to a
+   * deleted_at vs modified_at comparison.
+   */
+  agreed_hash: Blake3Hash | null;
 }
 
 export interface Manifest {

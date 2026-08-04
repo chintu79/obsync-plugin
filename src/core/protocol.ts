@@ -182,6 +182,7 @@ export function manifestFromWire(w: WireManifest): Manifest {
       relative_path: t.relative_path,
       revision: t.revision,
       deleted_at: t.deleted_at,
+      agreed_hash: null,
     })),
     revision_counter: w.revision_counter,
   };
