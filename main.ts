@@ -31,7 +31,7 @@ export default class ObsyncPlugin extends Plugin {
   serverUrl = "";
   /** Auto-sync on vault changes + periodic polling. */
   autoSyncEnabled = true;
-  autoSyncIntervalSec = 30;
+  autoSyncIntervalMs = 250;
   private syncInProgress = false;
   private syncDebounce: number | null = null;
   private pollTimer: number | null = null;
@@ -62,7 +62,7 @@ export default class ObsyncPlugin extends Plugin {
     }
     if (saved?.serverUrl) this.serverUrl = saved.serverUrl;
     if (typeof saved?.autoSyncEnabled === "boolean") this.autoSyncEnabled = saved.autoSyncEnabled;
-    if (typeof saved?.autoSyncIntervalSec === "number") this.autoSyncIntervalSec = saved.autoSyncIntervalSec;
+    if (typeof saved?.autoSyncIntervalMs === "number") this.autoSyncIntervalMs = saved.autoSyncIntervalMs;
 
     // Engine over the vault adapter + JSON store.
     const store = new Store(this.adapter);
@@ -108,7 +108,7 @@ export default class ObsyncPlugin extends Plugin {
     if (!this.autoSyncEnabled || !Platform.isMobile) return;
     this.pollTimer = window.setInterval(
       () => void this.syncNow(true),
-      this.autoSyncIntervalSec * 1000
+      Math.max(100, this.autoSyncIntervalMs)
     );
   }
 
@@ -118,9 +118,9 @@ export default class ObsyncPlugin extends Plugin {
     this.reschedulePoll();
   }
 
-  async setAutoSyncInterval(sec: number): Promise<void> {
-    this.autoSyncIntervalSec = sec;
-    await this.saveData({ ...(await this.loadData()), autoSyncIntervalSec: sec });
+  async setAutoSyncInterval(ms: number): Promise<void> {
+    this.autoSyncIntervalMs = ms;
+    await this.saveData({ ...(await this.loadData()), autoSyncIntervalMs: ms });
     this.reschedulePoll();
   }
 
@@ -131,7 +131,7 @@ export default class ObsyncPlugin extends Plugin {
     this.syncDebounce = window.setTimeout(() => {
       this.syncDebounce = null;
       void this.syncNow(true);
-    }, 1500);
+    }, 150);
   }
 
   vaultAdapter(): VaultAdapter | null {

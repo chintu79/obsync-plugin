@@ -80,7 +80,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Auto-sync")
       .setDesc(
-        "Sync when files change and (on mobile) poll the server every interval. No more pressing Sync by hand."
+        "Sync when files change and (on mobile) poll the server every interval (ms). Near-instant by default."
       )
       .addToggle((t) =>
         t
@@ -91,12 +91,12 @@ export class ObsyncSettingsTab extends PluginSettingTab {
           })
       )
       .addText((t) => {
-        t.setPlaceholder("30")
-          .setValue(String(this.plugin.autoSyncIntervalSec));
+        t.setPlaceholder("250")
+          .setValue(String(this.plugin.autoSyncIntervalMs));
         t.inputEl.style.width = "4em";
         t.onChange(async (v) => {
           const n = Number.parseInt(v, 10);
-          if (Number.isFinite(n) && n >= 5) {
+          if (Number.isFinite(n) && n >= 100) {
             await this.plugin.setAutoSyncInterval(n);
           }
         });
