@@ -231,4 +231,27 @@ describe("desktop sync round-trip", () => {
     const clientManifest = await client.engine.buildManifest();
     expect(clientManifest.tombstones.some((t) => t.relative_path === "notes/ideas.md")).toBe(false);
   });
+
+  it("a file that disappears server-side mid-pull is skipped, not fatal", async () => {
+    // Simulate the disk race: the file exists when the manifest is built but
+    // readBinary fails during the chunk exchange (server tombstoned it, a
+    // watcher moved it, etc.). The session must not abort and every other file
+    // must still reach the client.
+    const failing = new NodeVaultAdapter(serverVault.root);
+    const origRead = failing.readBinary.bind(failing);
+    failing.readBinary = async (rel: string) => {
+      if (rel === "notes/ideas.md") throw new Error("boom: file gone");
+      return origRead(rel);
+    };
+    const failingServer = new SyncServer(serverVault.engine, failing);
+    const failingSrv = await startRpcServer((msg) => failingServer.handle(msg), 0);
+    const failingUrl = `http://127.0.0.1:${failingSrv.port}${RPC_PATH}`;
+
+    const client = await makeVault("client", {});
+    const report = await runClientSession(client.engine, HttpClientTransport.forNode(failingUrl));
+    expect(fs.existsSync(path.join(client.root, "notes/hello.md"))).toBe(true);
+    expect(fs.existsSync(path.join(client.root, "notes/ideas.md"))).toBe(false);
+    expect(report.pulled_files).toBe(1);
+    await failingSrv.close();
+  });
 });

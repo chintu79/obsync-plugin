@@ -75,7 +75,8 @@ export class HttpClientTransport implements HttpTransport {
         body,
       });
       if (!resp.ok) {
-        throw NetworkError.connection(`HTTP ${resp.status}`);
+        const detail = (await resp.text().catch(() => "")).slice(0, 300);
+        throw NetworkError.connection(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
       }
       return resp.text();
     }, timeoutMs);
@@ -126,7 +127,8 @@ export class RequestUrlTransport implements HttpTransport {
           throw: false,
         });
         if (resp.status >= 400) {
-          throw NetworkError.connection(`HTTP ${resp.status}`);
+          const detail = (resp.text ?? "").slice(0, 300);
+          throw NetworkError.connection(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
         }
         return resp.text;
       })(),

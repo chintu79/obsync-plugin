@@ -206,7 +206,18 @@ export class SyncServer {
 
       case "file_request": {
         const req = msg.payload as FileRequestPayload;
-        return newMessage("file_chunk", msg.request_id, await this.chunkAt(req));
+        // A file can disappear between the manifest exchange and the chunk
+        // request (e.g. the authoritative server just tombstoned it, or a
+        // background watcher moved it). Reply with an ack error instead of
+        // letting the read throw an opaque HTTP 500; the client skips the file.
+        try {
+          return newMessage("file_chunk", msg.request_id, await this.chunkAt(req));
+        } catch (e) {
+          return ack(
+            false,
+            `cannot read ${req.relative_path}: ${e instanceof Error ? e.message : e}`
+          );
+        }
       }
 
       case "sync_operation": {
@@ -326,7 +337,10 @@ async function pullFileTo(
     req.offset = offset;
     const reply = await transport.exchange(newMessage("file_request", nextId(), req));
     if (reply.message_type !== "file_chunk") {
-      throw new Error("expected FileChunk from server");
+      const err = (reply.payload as OperationAckPayload | undefined)?.error;
+      throw new Error(
+        `server could not send ${path}${err ? `: ${err}` : ""}`
+      );
     }
     const chunk = reply.payload as FileChunkPayload;
     const bytes = base64ToBytes(chunk.data_b64);
