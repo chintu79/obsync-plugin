@@ -20,7 +20,7 @@ Or build once and copy manually:
 
 ```bash
 npm run build
-# copy main.js, manifest.json, styles.css into <vault>/.obsidian/plugins/obsync/
+# copy main.js, manifest.json, styles.css into <vault>/.obsidian/plugins/obsync-p2p/
 ```
 
 Open the laptop vault in Obsidian, enable the plugin:
@@ -37,7 +37,7 @@ Settings → Obsync → **Start**. Expect the notice "Obsync server listening on
 ## 3. Install on the phone
 
 - Copy `main.js`, `manifest.json`, `styles.css` into the phone vault's
-  `.obsidian/plugins/obsync/` (via a file manager over USB or the hotspot
+  `.obsidian/plugins/obsync-p2p/` (via a file manager over USB or the hotspot
   shared folder), then restart Obsidian.
 - Or, once the plugin is published to the community catalog, install from
   Settings → Community plugins directly.

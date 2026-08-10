@@ -4,7 +4,7 @@
 #   ./install-to-vault.sh /path/to/vault
 #
 # Copies main.js + manifest.json + styles.css into
-# <vault>/.obsidian/plugins/obsync/. The plugin is built first if main.js is
+# <vault>/.obsidian/plugins/obsync-p2p/. The plugin is built first if main.js is
 # missing or stale (it is gitignored).
 
 set -euo pipefail
@@ -25,7 +25,7 @@ if [ ! -f main.js ] || [ main.ts -nt main.js ]; then
   npm run build
 fi
 
-DEST="$VAULT/.obsidian/plugins/obsync"
+DEST="$VAULT/.obsidian/plugins/obsync-p2p"
 mkdir -p "$DEST"
 cp main.js manifest.json styles.css "$DEST/"
 echo "installed to $DEST"

@@ -28,9 +28,9 @@ describe("shouldIgnore", () => {
   });
 
   it("ignores the obsync plugin's own folder (device identity lives there)", () => {
-    expect(shouldIgnore(".obsidian/plugins/obsync/data.json")).toBe(true);
-    expect(shouldIgnore(".obsidian/plugins/obsync/main.js")).toBe(true);
-    expect(shouldIgnore(".obsidian/plugins/obsync")).toBe(true);
+    expect(shouldIgnore(".obsidian/plugins/obsync-p2p/data.json")).toBe(true);
+    expect(shouldIgnore(".obsidian/plugins/obsync-p2p/main.js")).toBe(true);
+    expect(shouldIgnore(".obsidian/plugins/obsync-p2p")).toBe(true);
     // Other plugins are still synced (matches Rust: test_not_ignore_obsidian_dir).
     expect(shouldIgnore(".obsidian/plugins/other/data.json")).toBe(false);
   });
