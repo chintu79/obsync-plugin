@@ -1,6 +1,6 @@
 {
   "name": "obsync-plugin",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Obsync — free P2P sync for Obsidian",
   "main": "main.js",
   "scripts": {

@@ -195,8 +195,8 @@ Tag a version (no `v` prefix — Obsidian requires the tag to match
 `manifest.json` exactly):
 
 ```bash
-git tag 1.0.0
-git push origin 1.0.0
+git tag 1.0.1
+git push origin 1.0.1
 ```
 
 The [release workflow](.github/workflows/release.yml) builds `main.js` and
