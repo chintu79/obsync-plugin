@@ -70,7 +70,18 @@ export default class ObsyncPlugin extends Plugin {
     await this.engine.init();
 
     if (Platform.isDesktop) {
-      await this.engine.initialIndex();
+      // A failed initial scan must not kill onload: the index is reconciled
+      // by refreshIndex(true) at the start of every session hello, so an empty
+      // or partial index here is self-healing. Swallow and move on.
+      try {
+        await this.engine.initialIndex();
+      } catch (e) {
+        console.warn(
+          `obsync: initial index scan failed (will reconcile on first session): ${
+            e instanceof Error ? e.message : e
+          }`
+        );
+      }
       this.syncServer = new SyncServer(this.engine, this.adapter);
       this.pairing = new PairingServer(
         this.adapter,
@@ -78,16 +89,26 @@ export default class ObsyncPlugin extends Plugin {
         this.syncServer
       );
       // Desktop is authoritative and must always be reachable — auto-start the
-      // sync server instead of requiring a manual click in Settings.
+      // sync server instead of requiring a manual click in Settings. If the
+      // bind races with the previous instance's socket (EADDRINUSE), retry a
+      // few times before giving up.
       if (!this.server) {
         const pairing = this.pairing;
-        try {
-          this.server = await startRpcServer(
-            (msg) => pairing.handle(msg),
-            DEFAULT_PORT
-          );
-        } catch (e) {
-          console.warn("obsync: could not auto-start server:", e);
+        let lastErr: unknown = null;
+        for (let attempt = 0; attempt < 5 && !this.server; attempt++) {
+          try {
+            this.server = await startRpcServer(
+              (msg) => pairing.handle(msg),
+              DEFAULT_PORT
+            );
+          } catch (e) {
+            lastErr = e;
+            console.warn(`obsync: server auto-start attempt ${attempt + 1} failed:`, e);
+            await new Promise((res) => setTimeout(res, 1000));
+          }
+        }
+        if (!this.server) {
+          console.error("obsync: could not auto-start sync server:", lastErr);
         }
       }
     }
