@@ -1,11 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type ObsyncPlugin from "../../main";
-import { SyncEngine, SyncStateMachine } from "../core/engine";
-import { DeviceIdentity } from "../core/identity";
-import { SyncServer } from "../core/session";
-import { HttpClientTransport, startRpcServer, HttpServerHandle } from "../core/transport";
-import { ObsidianVaultAdapter } from "../obsidian-adapter";
-import { Store } from "../core/store";
+import { SyncEngine } from "../core/engine";
+import { HttpServerHandle } from "../core/transport";
 import { listAllSnapshots, restoreSnapshot } from "../core/versioning";
 import { PairingServer } from "../core/pairing";
 
@@ -29,7 +25,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Obsync" });
+    new Setting(containerEl).setName("Obsync").setHeading();
     containerEl.createEl("p", {
       text: "Free P2P sync for your vault. No cloud, no account.",
       cls: "obsync-muted",
@@ -93,7 +89,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       .addText((t) => {
         t.setPlaceholder("250")
           .setValue(String(this.plugin.autoSyncIntervalMs));
-        t.inputEl.style.width = "4em";
+        t.inputEl.addClass("obsync-input-compact");
         t.onChange(async (v) => {
           const n = Number.parseInt(v, 10);
           if (Number.isFinite(n) && n >= 100) {
@@ -111,14 +107,14 @@ export class ObsyncSettingsTab extends PluginSettingTab {
         })
       );
 
-    this.renderPairing();
-    this.renderConflicts();
-    this.renderSnapshots();
+    void this.renderPairing();
+    void this.renderConflicts();
+    void this.renderSnapshots();
   }
 
   private async renderPairing() {
     const { containerEl } = this;
-    containerEl.createEl("h3", { text: "Devices" });
+    new Setting(containerEl).setName("Devices").setHeading();
     const pairing = this.svc.pairing;
     if (!pairing) {
       containerEl.createEl("p", {
@@ -129,7 +125,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     }
     const pending = await pairing.pendingDevices();
     if (pending.length > 0) {
-      containerEl.createEl("h4", { text: "Awaiting approval" });
+      new Setting(containerEl).setName("Awaiting approval").setHeading();
       for (const p of pending) {
         new Setting(containerEl)
           .setName(`${p.device_name} wants to pair`)
@@ -154,7 +150,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       });
       return;
     }
-    containerEl.createEl("h4", { text: "Approved devices" });
+    new Setting(containerEl).setName("Approved devices").setHeading();
     for (const d of devices) {
       new Setting(containerEl)
         .setName(d.device_name)
@@ -170,7 +166,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
 
   private async renderConflicts() {
     const { containerEl } = this;
-    containerEl.createEl("h3", { text: "Conflicts" });
+    new Setting(containerEl).setName("Conflicts").setHeading();
     const engine = this.svc.engine;
     if (!engine) {
       containerEl.createEl("p", { text: "Engine not started.", cls: "obsync-muted" });
@@ -182,7 +178,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       return;
     }
     for (const c of conflicts) {
-      const item = new Setting(containerEl)
+      new Setting(containerEl)
         .setName(c.relative_path)
         .setDesc(`Detected ${new Date(c.detected_at).toLocaleString()}`)
         .addButton((b) =>
@@ -208,7 +204,7 @@ export class ObsyncSettingsTab extends PluginSettingTab {
 
   private async renderSnapshots() {
     const { containerEl } = this;
-    containerEl.createEl("h3", { text: "Versions" });
+    new Setting(containerEl).setName("Versions").setHeading();
     const adapter = this.svc.engine ? this.plugin.vaultAdapter() : null;
     if (!adapter) {
       containerEl.createEl("p", { text: "Engine not started.", cls: "obsync-muted" });

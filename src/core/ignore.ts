@@ -27,8 +27,8 @@ export function shouldIgnore(path: string): boolean {
   // identity (private key), and both devices rewrite their own copy, so it
   // conflicts forever and can exhaust conflict-copy names.
   if (
-    path === ".obsidian/plugins/obsync-p2p" ||
-    path.startsWith(".obsidian/plugins/obsync-p2p/")
+    path === ".obsidian/plugins/obsync-ptop" ||
+    path.startsWith(".obsidian/plugins/obsync-ptop/")
   ) {
     return true;
   }

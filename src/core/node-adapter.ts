@@ -42,7 +42,7 @@ export class NodeVaultAdapter implements VaultAdapter {
   async write(rel: string, data: Uint8Array | string): Promise<void> {
     const abs = this.abs(rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, data as any);
+    fs.writeFileSync(abs, data);
   }
 
   async remove(rel: string): Promise<void> {

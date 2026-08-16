@@ -19,6 +19,10 @@
   font-size: var(--font-ui-smaller);
 }
 
+.obsync-input-compact {
+  width: 4em;
+}
+
 .obsync-row {
   display: flex;
   align-items: center;

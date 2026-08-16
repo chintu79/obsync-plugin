@@ -1,6 +1,6 @@
 import { equalHash } from "./conflict";
 import { resolveDivergence, SideOutcome } from "./conflict";
-import { FileState, Manifest, RevisionId, Tombstone } from "./state";
+import { FileState, Manifest, RevisionId } from "./state";
 import { SyncOperation } from "./delta";
 
 export interface ManifestDiff {

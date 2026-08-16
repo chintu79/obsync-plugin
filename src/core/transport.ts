@@ -1,4 +1,4 @@
-import { MessageType, ProtocolMessage, newMessage, PROTOCOL_VERSION } from "./protocol";
+import { ProtocolMessage, newMessage, PROTOCOL_VERSION } from "./protocol";
 import { NetworkError } from "./errors";
 
 export const DEFAULT_PORT = 42042;
@@ -40,7 +40,7 @@ export function encodeMessage(msg: ProtocolMessage): string {
 export function decodeMessage(body: string): ProtocolMessage {
   let msg: ProtocolMessage;
   try {
-    msg = JSON.parse(body);
+    msg = JSON.parse(body) as ProtocolMessage;
   } catch (e) {
     throw NetworkError.protocol(`invalid JSON: ${e instanceof Error ? e.message : e}`);
   }
@@ -51,7 +51,7 @@ export function decodeMessage(body: string): ProtocolMessage {
 }
 
 function exchangeTimeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(NetworkError.timeout()), ms));
+  return new Promise((_, reject) => globalThis.setTimeout(() => reject(NetworkError.timeout()), ms));
 }
 
 /**
@@ -69,7 +69,7 @@ export class HttpClientTransport implements HttpTransport {
 
   static forNode(url: string, timeoutMs?: number): HttpClientTransport {
     return new HttpClientTransport(url, async (u, body) => {
-      const resp = await fetch(u, {
+      const resp = await globalThis.fetch(u, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
@@ -170,29 +170,38 @@ export async function startRpcServer(
   handler: MessageHandler,
   port: number = DEFAULT_PORT
 ): Promise<HttpServerHandle> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports -- lazy require("http") is Node-only and never evaluated on mobile; Obsidian's renderer resolves ES dynamic imports as URLs and fails with "Failed to fetch dynamically imported module"
   const http = require("http") as typeof import("http");
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer((req, res) => {
+    void handleRequest(req, res);
+  });
+
+  async function handleRequest(
+    req: import("http").IncomingMessage,
+    res: import("http").ServerResponse
+  ) {
     if (req.method !== "POST" || req.url !== RPC_PATH) {
       res.writeHead(404).end();
       return;
     }
     let body = "";
     req.on("data", (chunk) => (body += chunk));
-    req.on("end", async () => {
-      try {
-        const msg = decodeMessage(body);
-        const ctx: ServerRequestContext = { remoteAddress: req.socket.remoteAddress ?? "" };
-        const reply = await handler(msg, ctx);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(encodeMessage(reply));
-      } catch (e) {
-        const err = e instanceof Error ? e.message : String(e);
-        res.writeHead(500, { "content-type": "text/plain" });
-        res.end(`internal error: ${err}`);
-      }
+    req.on("end", () => {
+      void (async () => {
+        try {
+          const msg = decodeMessage(body);
+          const ctx: ServerRequestContext = { remoteAddress: req.socket.remoteAddress ?? "" };
+          const reply = await handler(msg, ctx);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(encodeMessage(reply));
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { "content-type": "text/plain" });
+          res.end(`internal error: ${err}`);
+        }
+      })();
     });
-  });
+  }
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

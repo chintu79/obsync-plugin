@@ -1,4 +1,4 @@
-import { Blake3Hash, FileState } from "./state";
+import { FileState } from "./state";
 
 /** How a path with different content on both sides should be resolved. */
 export enum SideOutcome {

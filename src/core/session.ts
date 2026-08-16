@@ -1,6 +1,6 @@
 import { resolveDivergence, SideOutcome } from "./conflict";
 import { contentHash } from "./hash";
-import { Manifest, FileState } from "./state";
+import { FileState } from "./state";
 import { HttpTransport } from "./transport";
 import {
   FileChunkPayload,
@@ -14,7 +14,7 @@ import {
 } from "./protocol";
 import { SyncEngine, SyncReport } from "./engine";
 import { VaultAdapter } from "./vault";
-import { manifestToWire, manifestFromWire, hashFromHex } from "./protocol";
+import { manifestToWire, manifestFromWire } from "./protocol";
 
 const CHUNK_SIZE = 65536;
 

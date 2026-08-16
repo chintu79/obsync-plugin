@@ -1,4 +1,4 @@
-import { Blake3Hash, FileState, SyncState, Tombstone } from "./state";
+import { Blake3Hash, FileState, Tombstone } from "./state";
 import { VaultAdapter } from "./vault";
 
 export const INDEX_PATH = ".obsync/index.json";
@@ -94,7 +94,7 @@ function stateFromSerialized(s: SerializedFileState): FileState {
     size: s.size,
     modified_at: s.modified_at,
     revision: s.revision,
-    sync_state: s.sync_state as SyncState,
+    sync_state: s.sync_state,
     synced_hash: deserializeHash(s.synced_hash),
   };
 }
@@ -106,7 +106,7 @@ function stateToSerialized(s: FileState): SerializedFileState {
     size: s.size,
     modified_at: s.modified_at,
     revision: s.revision,
-    sync_state: s.sync_state as number,
+    sync_state: s.sync_state,
     synced_hash: serializeHash(s.synced_hash),
   };
 }
@@ -141,7 +141,7 @@ export class Store {
     const raw = await this.vault.readText(this.indexPath);
     let data: SerializedIndex;
     try {
-      data = JSON.parse(raw);
+      data = JSON.parse(raw) as SerializedIndex;
     } catch {
       return; // corrupt index → start fresh
     }

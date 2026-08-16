@@ -7,6 +7,7 @@ on:
 
 permissions:
     contents: write
+    id-token: write
 
 jobs:
     build:
@@ -31,6 +32,11 @@ jobs:
 
             - name: Build
               run: npm run build
+
+            - name: Attest build provenance
+              uses: actions/attest-build-provenance@v2
+              with:
+                  subject-path: '${{ github.workspace }}/main.js, ${{ github.workspace }}/manifest.json, ${{ github.workspace }}/styles.css'
 
             - name: Create release
               env:

@@ -12,7 +12,7 @@ import {
   RPC_PATH,
   normalizeServerUrl,
 } from "./src/core/transport";
-import { DeviceIdentity } from "./src/core/identity";
+import { DeviceIdentity, type StoredDeviceIdentity } from "./src/core/identity";
 import { ObsyncSettingsTab } from "./src/ui/settings-tab";
 import { VaultAdapter } from "./src/core/vault";
 
@@ -51,7 +51,12 @@ export default class ObsyncPlugin extends Plugin {
     this.adapter = new ObsidianVaultAdapter(this.app.vault);
 
     // Load or generate device identity (persisted via loadData/saveData).
-    const saved = await this.loadData();
+    const saved = (await this.loadData()) as {
+      identity?: StoredDeviceIdentity;
+      serverUrl?: string;
+      autoSyncEnabled?: boolean;
+      autoSyncIntervalMs?: number;
+    } | null;
     if (saved?.identity) {
       this.identity = DeviceIdentity.fromStored(saved.identity);
     } else {
@@ -104,7 +109,7 @@ export default class ObsyncPlugin extends Plugin {
           } catch (e) {
             lastErr = e;
             console.warn(`obsync: server auto-start attempt ${attempt + 1} failed:`, e);
-            await new Promise((res) => setTimeout(res, 1000));
+            await new Promise((res) => globalThis.setTimeout(res, 1000));
           }
         }
         if (!this.server) {
@@ -128,7 +133,7 @@ export default class ObsyncPlugin extends Plugin {
   }
 
   onunload() {
-    this.server?.close();
+    void this.server?.close();
     if (this.syncDebounce !== null) window.clearTimeout(this.syncDebounce);
     if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
   }
@@ -241,11 +246,7 @@ export default class ObsyncPlugin extends Plugin {
         contentType: param.contentType,
         body: param.body,
         throw: false,
-      }) as unknown as Promise<{
-        status: number;
-        text: string;
-        arrayBuffer: ArrayBuffer;
-      }>;
+      });
     });
     this.statusBarItem?.setText("Obsync: syncing…");
     try {
@@ -276,11 +277,7 @@ export default class ObsyncPlugin extends Plugin {
         contentType: param.contentType,
         body: param.body,
         throw: false,
-      }) as unknown as Promise<{
-        status: number;
-        text: string;
-        arrayBuffer: ArrayBuffer;
-      }>;
+      });
     });
 
     // Pair (idempotent: pair_ack returns approved status for known devices).

@@ -141,7 +141,7 @@ export function hashFromHex(hex: string): Uint8Array {
   return out;
 }
 
-import { FileState, Manifest, SyncState, Tombstone } from "./state";
+import { FileState, Manifest, Tombstone } from "./state";
 
 /** Encode an in-memory Manifest (Uint8Array hashes) for the wire. */
 export function manifestToWire(m: Manifest): WireManifest {
@@ -153,7 +153,7 @@ export function manifestToWire(m: Manifest): WireManifest {
       size: f.size,
       modified_at: f.modified_at,
       revision: f.revision,
-      sync_state: f.sync_state as number,
+      sync_state: f.sync_state,
       synced_hash: f.synced_hash ? hashToHex(f.synced_hash) : null,
     })),
     tombstones: m.tombstones.map((t) => ({
@@ -175,7 +175,7 @@ export function manifestFromWire(w: WireManifest): Manifest {
       size: f.size,
       modified_at: f.modified_at,
       revision: f.revision,
-      sync_state: f.sync_state as SyncState,
+      sync_state: f.sync_state,
       synced_hash: f.synced_hash ? hashFromHex(f.synced_hash) : null,
     })),
     tombstones: w.tombstones.map((t) => ({
