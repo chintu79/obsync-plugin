@@ -8,6 +8,8 @@ Sync your Obsidian vault between your laptop and your phone over your own
 network — direct and private. Your notes never touch a third-party server.
 
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+![Version: 1.0.4](https://img.shields.io/badge/version-1.0.4-blue)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
 </div>
 
@@ -21,24 +23,53 @@ Obsync is an alternative that keeps your notes on your devices:
 - **No cloud, no accounts** — devices talk directly over your LAN.
 - **Direct P2P transport** — a dedicated sync protocol on your own network.
 - **Pairing by fingerprint** — approve each device once; no passwords to share.
-- **Conflict detection** — files edited on both sides are flagged, never silently clobbered.
-- **Local-first** — your vault stays an ordinary folder on disk. No lock-in; leave anytime.
+- **Conflict detection** — files edited on both sides are flagged, never
+  silently clobbered.
+- **Local-first** — your vault stays an ordinary folder on disk. No lock-in;
+  leave anytime.
 - **Works on desktop and mobile** — the same plugin runs on both, so a laptop
-  pairs with a phone over the hotspot.
+  pairs with a phone over a shared hotspot.
 - **Near-instant** — vault changes propagate within a few hundred milliseconds
   (the mobile polls every 250 ms; both sides sync ~150 ms after an edit).
 
+## Requirements
+
+- **Obsidian desktop** (Windows, macOS, or Linux) on the device that runs the
+  server.
+- **Obsidian mobile** on the device that syncs as the client.
+- Both devices on the **same network** (Wi-Fi or phone hotspot), and the
+  client must be able to reach the server's IP on port `42042`.
+- **Enable the plugin on both devices.** Server and client roles are a setting,
+  not a separate app.
+
+## Install
+
+1. In Obsidian, open **Settings → Community plugins**, disable *Restricted
+   mode*, and browse the catalog for **P2P Vault Sync** (this plugin).
+2. Install and enable it on **both** devices.
+3. Open **Settings → Obsync** — the laptop starts the server, the phone gets
+   the server URL.
+
+### First-time walkthrough
+
+1. On the laptop: **Settings → Obsync → Start server**. The server listens on
+   port `42042` and shows its IP + fingerprint.
+2. On the phone: **Settings → Obsync**, set the server URL to the laptop's IP
+   (e.g. `http://10.174.223.140:42042`), then **Sync now**.
+3. The phone appears under **Awaiting approval** on the laptop — click
+   **Approve**.
+4. Tap **Sync now** again on the phone. Done — from here on it syncs
+   automatically.
+
+> The URL is normalized for you: `10.174.223.140:42042` works, no `http://`
+> needed. See [`src/core/transport.ts`](src/core/transport.ts) (`normalizeServerUrl`).
+
 ## How it works
 
-One device (usually your laptop) runs the **server**: Obsidian → Settings →
-Obsync → **Start**. The other device (usually your phone) runs the **client**:
-set the server URL (e.g. `http://192.168.1.5:42042`) and the phone takes it
-from there.
-
-The laptop is **authoritative for deletions**; the phone is **additive-only**,
-so a partially synced phone can never delete files on the server. Every edit
-made on either side is detected by re-scanning the vault, and diverged files
-are surfaced as conflicts you resolve in the settings tab.
+One device (usually your laptop) runs the **server**; the other device
+(usually your phone) runs the **client**. The laptop is **authoritative for
+deletions** — the phone is **additive-only**, so a partially synced phone can
+never delete files on the server.
 
 ### Architecture
 
@@ -106,9 +137,9 @@ request, the reply is the next message.
 ```
 
 Step 6 is where the client decides what to do with each file: pull files the
-server has, push files only the client has, and apply tombstones. Every
-step that touches a single file is isolated — a chronically-conflicting file
-cannot stall the rest of the session.
+server has, push files only the client has, and apply tombstones. Every step
+that touches a single file is isolated — a chronically-conflicting file cannot
+stall the rest of the session.
 
 ### Conflict resolution
 
@@ -116,7 +147,7 @@ cannot stall the rest of the session.
    File differs on both sides
               │
               ▼
- Did either side change since the last agreed sync hash?
+  Did either side change since the last agreed sync hash?
               │
       ┌───────┴────────┐
       ▼                ▼
@@ -134,27 +165,25 @@ cannot stall the rest of the session.
 > sides changed since that agreement. See
 > [`src/core/conflict.ts`](src/core/conflict.ts).
 
-## Install
+## Settings reference
 
-1. In Obsidian, open **Settings → Community plugins** and install **Obsync** from the catalog.
-2. Enable it.
-3. Open **Settings → Obsync** to start the server, pair a device, or configure the server URL.
+Everything lives under **Settings → Obsync**:
 
-### First-time walkthrough
-
-1. On the laptop: **Settings → Obsync → Start** (server listens on port 42042).
-2. On the phone: **Settings → Obsync**, set the server URL to the laptop's IP
-   (e.g. `http://10.174.223.140:42042`), then **Sync now**.
-3. The phone's device appears under **Awaiting approval** on the laptop — click **Approve**.
-4. Tap **Sync now** again on the phone. Done — from here on it syncs automatically.
-
-> The URL is normalized for you: `10.174.223.140:42042` works, no `http://` needed.
-> See [`src/core/transport.ts`](src/core/transport.ts#L4) (`normalizeServerUrl`).
+| Section | What it does |
+|---|---|
+| **Device identity** | Device name + fingerprint shown to the server during pairing |
+| **Sync server** | Start/stop the RPC server on the authoritative device (port 42042) |
+| **Sync server URL** | Server URL for the client (normalized), and the sync poll interval (default 250 ms, min 100 ms) |
+| **Auto-sync** | Sync on vault changes and (on mobile) poll the server every interval |
+| **Sync now** | Force a session on demand (also available via the ribbon icon and the command palette) |
+| **Devices** | Approved devices, pending approval requests, revoke access |
+| **Conflicts** | Files changed on both sides — resolve per file: keep local / keep remote / keep both |
+| **Versions** | Snapshot history of every file; restore any past version |
 
 ## How sync is triggered
 
-- **On edit** — vault `create`/`modify`/`delete` events trigger a debounced sync
-  (~150 ms) on both platforms.
+- **On edit** — vault `create`/`modify`/`delete` events trigger a debounced
+  sync (~150 ms) on both platforms.
 - **On poll** — the phone polls the server every **250 ms** (configurable, min
   100 ms) to pick up remote changes; HTTP is request/response, so there is no
   push channel.
@@ -163,12 +192,27 @@ cannot stall the rest of the session.
 Both are gated by a `syncInProgress` guard so sessions never overlap. See
 [`main.ts`](main.ts).
 
+## Limitations
+
+- **One server, one vault at a time** — the server device is authoritative; a
+  second phone can pair, but there is no multi-master mode yet.
+- **Same-network only** — no relay/TURN; both devices must reach each other
+  directly.
+- **No filesystem watcher** — Obsidian's edit events trigger sync, and the
+  server re-scans the vault at the start of every session, so files edited
+  directly on disk (outside Obsidian) are picked up on the next sync. The
+  client's disk may be an incomplete replica, so it only ever adds, never
+  tombstones.
+- **Alpha** — works end-to-end; expect rough edges. The sync engine is covered
+  by 96 tests, including cross-language conformance tests against the Rust
+  core.
+
 ## Development
 
 ```bash
 npm install
 npm run build      # tsc typecheck + esbuild bundle → main.js
-npm test           # vitest (93 tests: engine, sync, store, scanner, crypto, pairing…)
+npm test           # vitest (96 tests: engine, sync, store, scanner, crypto, pairing…)
 ```
 
 The engine is a TypeScript port of the Rust sync engine in
@@ -191,16 +235,21 @@ conformance tests keeping the two implementations equivalent.
 
 ### Release
 
-Tag a version (no `v` prefix — Obsidian requires the tag to match
-`manifest.json` exactly):
+Releases are cut by maintainers. Tag a version with the **exact
+`manifest.json` version, no `v` prefix**:
 
 ```bash
-git tag 1.0.2
-git push origin 1.0.1
+git tag 1.0.4
+git push origin 1.0.4
 ```
 
 The [release workflow](.github/workflows/release.yml) builds `main.js` and
 attaches `main.js` + `manifest.json` + `styles.css` to a GitHub release.
+
+## Contributing
+
+We welcome contributions of all kinds — code, docs, bug reports, feature ideas.
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ## Related
 
@@ -217,5 +266,9 @@ Licensed under either of
 - MIT license ([LICENSE](LICENSE))
 
 at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Obsync shall be dual-licensed as above, without any additional
+terms or conditions.
 
 © 2026 Obsync contributors.
