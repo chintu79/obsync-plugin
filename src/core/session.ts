@@ -234,6 +234,13 @@ export class SyncServer {
         return ack(true);
       }
 
+      case "ping": {
+        // Liveness probe used by zero-config server discovery. Stateless —
+        // any reachable Obsync server answers ok, which is what distinguishes
+        // it from a random device that happens to have the port open.
+        return ack(true);
+      }
+
       default:
         return ack(false, `unexpected message type ${msg.message_type}`);
     }

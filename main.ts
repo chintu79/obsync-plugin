@@ -12,6 +12,8 @@ import {
   RPC_PATH,
   normalizeServerUrl,
 } from "./src/core/transport";
+import { discoverServer, obsidianProbe, type ServerProbe } from "./src/core/discovery";
+import { ObsyncOnboardingModal } from "./src/ui/onboarding";
 import { DeviceIdentity, type StoredDeviceIdentity } from "./src/core/identity";
 import { ObsyncSettingsTab } from "./src/ui/settings-tab";
 import { VaultAdapter } from "./src/core/vault";
@@ -25,7 +27,7 @@ export default class ObsyncPlugin extends Plugin {
   private adapter: ObsidianVaultAdapter | null = null;
   private syncServer: SyncServer | null = null;
   private pairing: PairingServer | null = null;
-  private statusBarItem: { setText: (text: string) => void } | null = null;
+  private statusBarEl: HTMLElement | null = null;
 
   /** Server URL configured in settings (mobile). */
   serverUrl = "";
@@ -36,6 +38,11 @@ export default class ObsyncPlugin extends Plugin {
   private syncDebounce: number | null = null;
   private pollTimer: number | null = null;
 
+  /** Connection state surfaced in the status bar + settings. */
+  connectionStatus: "unknown" | "connecting" | "connected" | "not_found" = "unknown";
+  private probeFn: ServerProbe | null = null;
+  private onboardingOpen = false;
+
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
 
@@ -45,8 +52,16 @@ export default class ObsyncPlugin extends Plugin {
       callback: () => this.syncNow(),
     });
 
-    this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setText("Obsync: idle");
+    this.addCommand({
+      id: "open-onboarding",
+      name: "Set up connection",
+      callback: () => this.openOnboarding(),
+    });
+
+    this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.addClass("mod-clickable");
+    this.statusBarEl.addEventListener("click", () => this.onStatusBarClick());
+    this.updateStatusBar();
 
     this.adapter = new ObsidianVaultAdapter(this.app.vault);
 
@@ -68,6 +83,9 @@ export default class ObsyncPlugin extends Plugin {
     if (saved?.serverUrl) this.serverUrl = saved.serverUrl;
     if (typeof saved?.autoSyncEnabled === "boolean") this.autoSyncEnabled = saved.autoSyncEnabled;
     if (typeof saved?.autoSyncIntervalMs === "number") this.autoSyncIntervalMs = saved.autoSyncIntervalMs;
+
+    // Probe client for zero-config discovery (mobile path; harmless on desktop).
+    this.probeFn = obsidianProbe((param) => requestUrl(param));
 
     // Engine over the vault adapter + JSON store.
     const store = new Store(this.adapter);
@@ -118,6 +136,19 @@ export default class ObsyncPlugin extends Plugin {
       }
     }
 
+    if (Platform.isDesktop) {
+      this.connectionStatus = "connected";
+      this.updateStatusBar();
+    } else {
+      // Mobile: connect to the desktop server. With a saved URL, probe it
+      // first; otherwise open the onboarding flow to auto-discover.
+      if (this.serverUrl) {
+        void this.checkSavedServer(this.serverUrl);
+      } else {
+        this.openOnboarding();
+      }
+    }
+
     // Auto-sync: vault edits trigger an immediate (debounced) session, and on
     // mobile a periodic poll fetches remote changes (HTTP is request/response —
     // there is no push channel, so the phone polls instead).
@@ -129,7 +160,9 @@ export default class ObsyncPlugin extends Plugin {
 
     this.addSettingTab(new ObsyncSettingsTab(this.app, this, this.serviceState()));
 
-    new Notice(`Obsync ready (${this.identity.fingerprint()})`);
+    if (!Platform.isMobile) {
+      new Notice(`Obsync ready (${this.identity.fingerprint()})`);
+    }
   }
 
   onunload() {
@@ -144,11 +177,127 @@ export default class ObsyncPlugin extends Plugin {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    if (!this.autoSyncEnabled || !Platform.isMobile) return;
+    if (!this.autoSyncEnabled || !Platform.isMobile || !this.serverUrl) return;
     this.pollTimer = window.setInterval(
       () => void this.syncNow(true),
       Math.max(100, this.autoSyncIntervalMs)
     );
+  }
+
+  /** Status bar text for the current connection state. */
+  private updateStatusBar(): void {
+    if (!this.statusBarEl) return;
+    if (Platform.isDesktop) {
+      this.statusBarEl.setText(
+        this.server ? `Obsync: server on :${this.server.port}` : "Obsync: idle"
+      );
+      return;
+    }
+    switch (this.connectionStatus) {
+      case "connecting":
+        this.statusBarEl.setText("Obsync: connecting…");
+        break;
+      case "connected":
+        this.statusBarEl.setText("Obsync: connected");
+        break;
+      case "not_found":
+        this.statusBarEl.setText("Obsync: server not found");
+        break;
+      default:
+        this.statusBarEl.setText("Obsync: not set up");
+        break;
+    }
+  }
+
+  private onStatusBarClick(): void {
+    if (Platform.isMobile) this.openOnboarding();
+    else new Notice("Obsync server is running on this device.");
+  }
+
+  /** Probe a specific base URL (no discovery). */
+  private async probeServerUrl(url: string): Promise<boolean> {
+    if (!this.probeFn) return false;
+    return this.probeFn(normalizeServerUrl(url), 4000);
+  }
+
+  /** On launch, verify a persisted URL; fall back to onboarding if offline. */
+  private async checkSavedServer(url: string): Promise<void> {
+    this.connectionStatus = "connecting";
+    this.updateStatusBar();
+    const ok = await this.probeServerUrl(url);
+    if (ok) {
+      this.connectionStatus = "connected";
+    } else {
+      this.connectionStatus = "not_found";
+      this.openOnboarding(url);
+    }
+    this.updateStatusBar();
+  }
+
+  /** Open the zero-config onboarding modal (mobile only). */
+  private openOnboarding(prefillUrl?: string): void {
+    if (Platform.isDesktop) {
+      new Notice("Obsync server is running on this device — nothing to set up.");
+      return;
+    }
+    if (this.onboardingOpen || !this.probeFn) return;
+    this.onboardingOpen = true;
+    this.connectionStatus = "connecting";
+    this.updateStatusBar();
+    const modal = new ObsyncOnboardingModal(this.app, {
+      savedUrl: prefillUrl ?? this.serverUrl,
+      discover: async () => {
+        const outcome = await discoverServer({
+          probe: this.probeFn!,
+          onProgress: (tried, total) => modal.setProgress(tried, total),
+        });
+        return outcome.found ? outcome.url! : null;
+      },
+      probe: (url) => this.probeServerUrl(url),
+      onConnected: async (url) => {
+        await this.saveServerUrl(url);
+        this.connectionStatus = "connected";
+        this.updateStatusBar();
+        this.reschedulePoll();
+        new Notice("Obsync connected.");
+      },
+    });
+    modal.onClose = () => {
+      this.onboardingOpen = false;
+    };
+    modal.open();
+  }
+
+  /** Clear the saved server and re-run discovery (from Settings). */
+  async changeServer(): Promise<void> {
+    if (Platform.isDesktop) {
+      new Notice("Obsync runs as the server on this device.");
+      return;
+    }
+    await this.saveServerUrl("");
+    this.connectionStatus = "unknown";
+    this.updateStatusBar();
+    this.openOnboarding();
+  }
+
+  /** Verify the current server (or discover one) and report to the user. */
+  async testConnection(): Promise<boolean> {
+    if (Platform.isDesktop) return true;
+    if (!this.probeFn) return false;
+    let url = this.serverUrl;
+    if (!url) {
+      const outcome = await discoverServer({ probe: this.probeFn });
+      url = outcome.found ? outcome.url! : "";
+    }
+    if (!url) {
+      this.connectionStatus = "not_found";
+      this.updateStatusBar();
+      return false;
+    }
+    const ok = await this.probeServerUrl(url);
+    this.connectionStatus = ok ? "connected" : "not_found";
+    this.updateStatusBar();
+    return ok;
   }
 
   async setAutoSync(enabled: boolean): Promise<void> {
@@ -248,17 +397,17 @@ export default class ObsyncPlugin extends Plugin {
         throw: false,
       });
     });
-    this.statusBarItem?.setText("Obsync: syncing…");
+    this.statusBarEl?.setText("Obsync: syncing…");
     try {
       const report = await runClientSession(this.engine, transport);
-      this.statusBarItem?.setText("Obsync: up to date");
+      this.statusBarEl?.setText("Obsync: up to date");
       if (!quiet) {
         new Notice(
           `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
         );
       }
     } catch (e) {
-      this.statusBarItem?.setText("Obsync: error");
+      this.statusBarEl?.setText("Obsync: error");
       if (!quiet) new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
     }
   }
@@ -266,7 +415,9 @@ export default class ObsyncPlugin extends Plugin {
   private async mobileSync(quiet: boolean): Promise<void> {
     if (!this.engine || !this.identity) return;
     if (!this.serverUrl) {
-      if (!quiet) new Notice("Obsync: set the desktop server URL in settings.");
+      if (!quiet)
+        new Notice("Obsync: not connected yet. Tap the status bar to set up the server.");
+      this.openOnboarding();
       return;
     }
     const url = `${normalizeServerUrl(this.serverUrl)}${RPC_PATH}`;
@@ -292,17 +443,19 @@ export default class ObsyncPlugin extends Plugin {
 
     // Mobile is additive: never tombstone phantom deletions.
     await this.engine.refreshIndex(false);
-    this.statusBarItem?.setText("Obsync: syncing…");
+    this.statusBarEl?.setText("Obsync: syncing…");
     try {
       const report = await runClientSession(this.engine, transport);
-      this.statusBarItem?.setText("Obsync: up to date");
+      this.connectionStatus = "connected";
+      this.updateStatusBar();
       if (!quiet) {
         new Notice(
           `Obsync sync: pulled=${report.pulled_files} pushed=${report.pushed_files} deleted=${report.deleted_files} conflicts=${report.conflicts}`
         );
       }
     } catch (e) {
-      this.statusBarItem?.setText("Obsync: error");
+      this.connectionStatus = "not_found";
+      this.updateStatusBar();
       if (!quiet) new Notice(`Obsync sync failed: ${e instanceof Error ? e.message : e}`);
     }
   }

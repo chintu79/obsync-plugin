@@ -31,6 +31,18 @@ export class ObsyncSettingsTab extends PluginSettingTab {
       cls: "obsync-muted",
     });
 
+    if (this.plugin.isMobile()) {
+      new Setting(containerEl)
+        .setName("Setup")
+        .setDesc("Tap to find your sync server automatically.")
+        .addButton((b) =>
+          b.setButtonText("Set up connection").onClick(async () => {
+            await this.plugin.changeServer();
+            this.display();
+          })
+        );
+    }
+
     new Setting(containerEl)
       .setName("Device identity")
       .setDesc(
@@ -45,33 +57,60 @@ export class ObsyncSettingsTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl)
-      .setName("Sync server")
-      .setDesc(
-        this.svc.server
-          ? `Listening on ${this.svc.serverUrl}`
-          : "Not listening (desktop only)."
-      )
-      .addButton((b) =>
-        b
-          .setButtonText(this.svc.server ? "Stop" : "Start")
-          .onClick(async () => {
-            await this.plugin.toggleServer();
+    if (!this.plugin.isMobile()) {
+      new Setting(containerEl)
+        .setName("Sync server")
+        .setDesc(
+          this.svc.server
+            ? `Listening on ${this.svc.serverUrl}`
+            : "Not listening (desktop only)."
+        )
+        .addButton((b) =>
+          b
+            .setButtonText(this.svc.server ? "Stop" : "Start")
+            .onClick(async () => {
+              await this.plugin.toggleServer();
+              this.display();
+            })
+        );
+    }
+
+    if (this.plugin.isMobile()) {
+      new Setting(containerEl)
+        .setName("Connection")
+        .setDesc(this.connectionDescription())
+        .addButton((b) =>
+          b.setButtonText("Test connection").onClick(async () => {
+            const ok = await this.plugin.testConnection();
+            new Notice(
+              ok
+                ? "Obsync: connected to your server."
+                : "Obsync: couldn't reach the server. Check that it's running and both devices are on the same network."
+            );
             this.display();
           })
-      );
+        )
+        .addButton((b) =>
+          b.setButtonText("Change server").onClick(async () => {
+            await this.plugin.changeServer();
+            this.display();
+          })
+        );
 
-    new Setting(containerEl)
-      .setName("Sync server URL (mobile)")
-      .setDesc("The laptop's hotspot IP + port, e.g. http://10.174.223.140:42042")
-      .addText((t) => {
-        t.setPlaceholder("http://<desktop-ip>:42042")
-          .setValue(this.svc.serverUrl)
-          .onChange(async (v) => {
-            await this.plugin.saveServerUrl(v.trim());
-            this.plugin.reschedulePoll();
-          });
-      });
+      new Setting(containerEl)
+        .setName("Server address (advanced)")
+        .setDesc(
+          "Auto-discovered on first launch — leave empty to search your network automatically. Enter manually only if auto-discovery can't find the server."
+        )
+        .addText((t) => {
+          t.setPlaceholder("http://192.168.1.5:42042")
+            .setValue(this.svc.serverUrl)
+            .onChange(async (v) => {
+              await this.plugin.saveServerUrl(v.trim());
+              this.plugin.reschedulePoll();
+            });
+        });
+    }
 
     new Setting(containerEl)
       .setName("Auto-sync")
@@ -110,6 +149,24 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     void this.renderPairing();
     void this.renderConflicts();
     void this.renderSnapshots();
+  }
+
+  private connectionDescription(): string {
+    if (!this.plugin.isMobile()) {
+      return this.svc.server
+        ? `Server is running on this device (port ${this.svc.server.port}).`
+        : "Server not running.";
+    }
+    switch (this.plugin.connectionStatus) {
+      case "connecting":
+        return "Connecting…";
+      case "connected":
+        return "Connected.";
+      case "not_found":
+        return "Server not found — retry, or enter the address manually below.";
+      default:
+        return "Not set up yet. Use Test connection to find your server.";
+    }
   }
 
   private async renderPairing() {

@@ -6,7 +6,7 @@ import { NodeVaultAdapter } from "../src/core/node-adapter";
 import { Store } from "../src/core/store";
 import { SyncEngine, hexOf } from "../src/core/engine";
 import { SyncServer, runClientSession } from "../src/core/session";
-import { HttpClientTransport, startRpcServer, RPC_PATH, HttpServerHandle } from "../src/core/transport";
+import { HttpClientTransport, startRpcServer, RPC_PATH, HttpServerHandle, pingMessage } from "../src/core/transport";
 
 interface Vault {
   root: string;
@@ -62,6 +62,13 @@ async function clientTransport() {
 }
 
 describe("desktop sync round-trip", () => {
+  it("answers ping for zero-config discovery", async () => {
+    const transport = await clientTransport();
+    const reply = await transport.exchange(pingMessage());
+    expect(reply.message_type).toBe("operation_ack");
+    expect((reply.payload as { ok: boolean }).ok).toBe(true);
+  });
+
   it("client pulls server files it lacks", async () => {
     const client = await makeVault("client", {});
     const report = await runClientSession(client.engine, await clientTransport());

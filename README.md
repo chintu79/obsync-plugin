@@ -53,16 +53,24 @@ Obsync is an alternative that keeps your notes on your devices:
 ### First-time walkthrough
 
 1. On the laptop: **Settings → Obsync → Start server**. The server listens on
-   port `42042` and shows its IP + fingerprint.
-2. On the phone: **Settings → Obsync**, set the server URL to the laptop's IP
-   (e.g. `http://10.174.223.140:42042`), then **Sync now**.
+   port `42042` and shows its fingerprint.
+2. On the phone: **Settings → Obsync → Set up connection**. The phone finds the
+   server automatically — first on this device, then across your network
+   (localhost → LAN scan). If your server is on an unusual subnet, tap
+   **Enter server URL manually** and type the address shown under
+   **Settings → Obsync → Connection** on the laptop (e.g.
+   `http://10.174.223.140:42042`).
 3. The phone appears under **Awaiting approval** on the laptop — click
    **Approve**.
 4. Tap **Sync now** again on the phone. Done — from here on it syncs
-   automatically.
+   automatically, and the phone reconnects on every launch.
 
-> The URL is normalized for you: `10.174.223.140:42042` works, no `http://`
-> needed. See [`src/core/transport.ts`](src/core/transport.ts) (`normalizeServerUrl`).
+> Auto-discovery never guesses: a host is accepted only if it answers the
+> Obsync ping with a valid protocol message, so an unrelated service on the
+> same port is ignored. The URL is normalized for you: `10.174.223.140:42042`
+> works, no `http://` needed. See
+> [`src/core/transport.ts`](src/core/transport.ts) (`normalizeServerUrl`) and
+> [`src/core/discovery.ts`](src/core/discovery.ts).
 
 ## How it works
 
@@ -173,7 +181,9 @@ Everything lives under **Settings → Obsync**:
 |---|---|
 | **Device identity** | Device name + fingerprint shown to the server during pairing |
 | **Sync server** | Start/stop the RPC server on the authoritative device (port 42042) |
-| **Sync server URL** | Server URL for the client (normalized), and the sync poll interval (default 250 ms, min 100 ms) |
+| **Setup** (mobile) | One-tap entry to the onboarding flow that auto-discovers the server |
+| **Connection** (mobile) | Live status ("Connected" / "Server not found"), plus **Test connection** and **Change server** |
+| **Server address (advanced)** (mobile) | Manual server URL (normalized); leave empty to auto-discover again |
 | **Auto-sync** | Sync on vault changes and (on mobile) poll the server every interval |
 | **Sync now** | Force a session on demand (also available via the ribbon icon and the command palette) |
 | **Devices** | Approved devices, pending approval requests, revoke access |
