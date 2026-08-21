@@ -17,8 +17,15 @@ import { ObsyncOnboardingModal } from "./src/ui/onboarding";
 import { DeviceIdentity, type StoredDeviceIdentity } from "./src/core/identity";
 import { ObsyncSettingsTab } from "./src/ui/settings-tab";
 import { VaultAdapter } from "./src/core/vault";
+import type { Scope } from "./src/core/scope";
 
 const DEFAULT_PORT = 42042;
+
+/** Vault-relative "/"-separated path (Obsidian paths already use "/", but
+ *  normalize defensively so a stray backslash can't bypass an exclusion). */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
 
 export default class ObsyncPlugin extends Plugin {
   identity: DeviceIdentity | null = null;
@@ -42,6 +49,10 @@ export default class ObsyncPlugin extends Plugin {
   connectionStatus: "unknown" | "connecting" | "connected" | "not_found" = "unknown";
   private probeFn: ServerProbe | null = null;
   private onboardingOpen = false;
+
+  /** Per-file exclusions ("don't sync this file"). Pure filter: excluded
+   *  files stay on disk and re-including resumes the last agreement. */
+  private syncExcludes = new Set<string>();
 
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
@@ -71,6 +82,7 @@ export default class ObsyncPlugin extends Plugin {
       serverUrl?: string;
       autoSyncEnabled?: boolean;
       autoSyncIntervalMs?: number;
+      scopeExcludes?: string[];
     } | null;
     if (saved?.identity) {
       this.identity = DeviceIdentity.fromStored(saved.identity);
@@ -83,6 +95,9 @@ export default class ObsyncPlugin extends Plugin {
     if (saved?.serverUrl) this.serverUrl = saved.serverUrl;
     if (typeof saved?.autoSyncEnabled === "boolean") this.autoSyncEnabled = saved.autoSyncEnabled;
     if (typeof saved?.autoSyncIntervalMs === "number") this.autoSyncIntervalMs = saved.autoSyncIntervalMs;
+    if (Array.isArray(saved?.scopeExcludes)) {
+      this.syncExcludes = new Set(saved.scopeExcludes.map(normalizePath));
+    }
 
     // Probe client for zero-config discovery (mobile path; harmless on desktop).
     this.probeFn = obsidianProbe((param) => requestUrl(param));
@@ -105,7 +120,9 @@ export default class ObsyncPlugin extends Plugin {
           }`
         );
       }
-      this.syncServer = new SyncServer(this.engine, this.adapter);
+      this.syncServer = new SyncServer(this.engine, this.adapter, () =>
+        this.localScope()
+      );
       this.pairing = new PairingServer(
         this.adapter,
         this.identity,
@@ -155,6 +172,35 @@ export default class ObsyncPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("create", () => this.scheduleAutoSync()));
     this.registerEvent(this.app.vault.on("modify", () => this.scheduleAutoSync()));
     this.registerEvent(this.app.vault.on("delete", () => this.scheduleAutoSync()));
+
+    // Per-file sync toggle in the file menu ("Don't sync this file" /
+    // "Sync this file"). Exclusion is a pure filter — the file stays on disk.
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!("extension" in file)) return; // files only, not folders
+        const path = normalizePath(file.path);
+        const excluded = this.syncExcludes.has(path);
+        menu.addItem((item) =>
+          item
+            .setTitle(excluded ? "Sync this file" : "Don't sync this file")
+            .setIcon(excluded ? "eye" : "eye-off")
+            .onClick(async () => {
+              if (excluded) {
+                this.syncExcludes.delete(path);
+              } else {
+                this.syncExcludes.add(path);
+              }
+              await this.saveScope();
+              new Notice(
+                excluded
+                  ? `Obsync: syncing ${path} again`
+                  : `Obsync: not syncing ${path} (it stays on this device)`
+              );
+              void this.syncNow(true);
+            })
+        );
+      })
+    );
 
     this.reschedulePoll();
 
@@ -344,6 +390,31 @@ export default class ObsyncPlugin extends Plugin {
     await this.saveData({ ...(await this.loadData()), serverUrl: this.serverUrl });
   }
 
+  /** This side's sync scope: whole vault minus per-file exclusions. */
+  localScope(): Scope {
+    return { entries: [], excludes: [...this.syncExcludes].sort() };
+  }
+
+  /** Persist the exclusion list. */
+  async saveScope(): Promise<void> {
+    await this.saveData({
+      ...(await this.loadData()),
+      scopeExcludes: [...this.syncExcludes].sort(),
+    });
+  }
+
+  /** Sorted snapshot for the settings list. */
+  excludedFiles(): string[] {
+    return [...this.syncExcludes].sort();
+  }
+
+  async setFileExcluded(path: string, excluded: boolean): Promise<void> {
+    const p = normalizePath(path);
+    if (excluded) this.syncExcludes.add(p);
+    else this.syncExcludes.delete(p);
+    await this.saveScope();
+  }
+
   async toggleServer(): Promise<void> {
     if (Platform.isMobile) {
       new Notice("The sync server runs on desktop only.");
@@ -399,7 +470,7 @@ export default class ObsyncPlugin extends Plugin {
     });
     this.statusBarEl?.setText("Obsync: syncing…");
     try {
-      const report = await runClientSession(this.engine, transport);
+      const report = await runClientSession(this.engine, transport, undefined, this.localScope());
       this.statusBarEl?.setText("Obsync: up to date");
       if (!quiet) {
         new Notice(
@@ -445,7 +516,7 @@ export default class ObsyncPlugin extends Plugin {
     await this.engine.refreshIndex(false);
     this.statusBarEl?.setText("Obsync: syncing…");
     try {
-      const report = await runClientSession(this.engine, transport);
+      const report = await runClientSession(this.engine, transport, undefined, this.localScope());
       this.connectionStatus = "connected";
       this.updateStatusBar();
       if (!quiet) {

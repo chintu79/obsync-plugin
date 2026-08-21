@@ -5,6 +5,7 @@ import { FileState, Manifest, RevisionId, SyncState } from "./state";
 import { Store } from "./store";
 import { SyncOperation } from "./delta";
 import { VaultAdapter } from "./vault";
+import { Scope, allows, isEverything } from "./scope";
 
 export enum SyncStateMachine {
   Idle = "idle",
@@ -280,6 +281,26 @@ export class SyncEngine {
     await this.requireLoaded();
     const files = await this.store.getAllFileStates();
     const tombstones = await this.store.getTombstones();
+    return {
+      device_id: this.deviceId,
+      files,
+      tombstones,
+      revision_counter: this.revisionCounter,
+    };
+  }
+
+  /** Port of build_manifest_scoped: only paths the scope allows are included.
+   *  Out-of-scope paths must never be advertised — omitting them without a
+   *  tombstone would read as "new files to push" on the peer. */
+  async buildManifestScoped(scope: Scope): Promise<Manifest> {
+    if (isEverything(scope)) return this.buildManifest();
+    await this.requireLoaded();
+    const files = (await this.store.getAllFileStates()).filter((f) =>
+      allows(scope, f.relative_path)
+    );
+    const tombstones = (await this.store.getTombstones()).filter((t) =>
+      allows(scope, t.relative_path)
+    );
     return {
       device_id: this.deviceId,
       files,

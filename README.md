@@ -186,9 +186,21 @@ Everything lives under **Settings → Obsync**:
 | **Server address (advanced)** (mobile) | Manual server URL (normalized); leave empty to auto-discover again |
 | **Auto-sync** | Sync on vault changes and (on mobile) poll the server every interval |
 | **Sync now** | Force a session on demand (also available via the ribbon icon and the command palette) |
+| **Excluded files** | Files kept out of sync (see below) |
 | **Devices** | Approved devices, pending approval requests, revoke access |
 | **Conflicts** | Files changed on both sides — resolve per file: keep local / keep remote / keep both |
 | **Versions** | Snapshot history of every file; restore any past version |
+
+## Per-file sync selection
+
+Right-click any file and choose **Don't sync this file** to keep it on that
+device only (choose **Sync this file** to undo). Excluded files are never
+pulled, pushed, or deleted by sync — they stay on disk untouched, and
+re-including a file resumes from the last version both sides agreed on, so no
+conflicts are manufactured. The list is managed under **Settings → Obsync →
+Excluded files**. Folders can be scoped per device from the desktop
+dashboard's *Sync scope* card; a file exclusion always wins over a folder
+rule.
 
 ## How sync is triggered
 

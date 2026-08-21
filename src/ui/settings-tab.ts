@@ -146,9 +146,40 @@ export class ObsyncSettingsTab extends PluginSettingTab {
         })
       );
 
+    this.renderExcludedFiles();
+
     void this.renderPairing();
     void this.renderConflicts();
     void this.renderSnapshots();
+  }
+
+  /** Per-file exclusions, managed from the file menu ("Don't sync this file"). */
+  private renderExcludedFiles(): void {
+    const { containerEl } = this;
+    const files = this.plugin.excludedFiles();
+    new Setting(containerEl).setName("Excluded files").setHeading();
+    if (files.length === 0) {
+      containerEl.createEl("p", {
+        text: "Every file syncs. Right-click a file and choose \"Don't sync this file\" to keep it on this device only.",
+        cls: "setting-item-description",
+      });
+      return;
+    }
+    containerEl.createEl("p", {
+      text: "These files stay on this device and are not synced. Removing them resumes syncing with the last agreed version intact.",
+      cls: "setting-item-description",
+    });
+    for (const path of files) {
+      new Setting(containerEl)
+        .setName(path)
+        .addButton((b) =>
+          b.setButtonText("Sync again").onClick(async () => {
+            await this.plugin.setFileExcluded(path, false);
+            await this.plugin.syncNow(true);
+            this.display();
+          })
+        );
+    }
   }
 
   private connectionDescription(): string {

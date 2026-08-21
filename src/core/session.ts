@@ -15,6 +15,7 @@ import {
 import { SyncEngine, SyncReport } from "./engine";
 import { VaultAdapter } from "./vault";
 import { manifestToWire, manifestFromWire } from "./protocol";
+import { Scope, allows, everythingScope } from "./scope";
 
 const CHUNK_SIZE = 65536;
 
@@ -27,7 +28,8 @@ const CHUNK_SIZE = 65536;
 export async function runClientSession(
   engine: SyncEngine,
   transport: HttpTransport,
-  hello?: Partial<HelloPayload>
+  hello?: Partial<HelloPayload>,
+  scope: Scope = everythingScope()
 ): Promise<SyncReport> {
   // 1. Hello handshake: server confirms this device is approved.
   const helloMsg = newMessage("hello", 0, {
@@ -46,8 +48,9 @@ export async function runClientSession(
     throw new Error(`device not approved by server`);
   }
 
-  // 2. Exchange manifests
-  const local = await engine.buildManifest();
+  // 2. Exchange manifests — ours is scoped: out-of-scope paths are never
+  // advertised, pulled, pushed, or deleted.
+  const local = await engine.buildManifestScoped(scope);
   const localReply = await transport.exchange(
     newMessage("manifest", 1, manifestToWire(local))
   );
@@ -71,6 +74,11 @@ export async function runClientSession(
   // one .obsidian settings file keeps failing.
   for (const [path, rf] of remoteMap) {
     try {
+      if (!allows(scope, path)) {
+        // The server's manifest is already filtered by the device scope,
+        // but a narrower local scope must never pull either.
+        continue;
+      }
       const lf = localMap.get(path);
       if (!lf) {
         const lt = localTombstones.get(path);
@@ -129,6 +137,11 @@ export async function runClientSession(
 
   // 5. Deletes: remote tombstones → delete locally
   for (const path of remoteTombstones) {
+    if (!allows(scope, path)) {
+      // Excluded paths never sync — a server tombstone must not delete a
+      // file this side has chosen to keep out of the sync.
+      continue;
+    }
     if (localMap.has(path)) {
       try {
         await engine.applyOperation({ op: "delete", path });
@@ -178,11 +191,15 @@ interface PendingWrite {
 
 export class SyncServer {
   private pending = new Map<number, PendingWrite>();
+  private getScope: () => Scope;
 
   constructor(
     private engine: SyncEngine,
-    private vault: VaultAdapter
-  ) {}
+    private vault: VaultAdapter,
+    getScope?: () => Scope
+  ) {
+    this.getScope = getScope ?? everythingScope;
+  }
 
   async handle(msg: ProtocolMessage): Promise<ProtocolMessage> {
     switch (msg.message_type) {
@@ -200,12 +217,17 @@ export class SyncServer {
       }
 
       case "manifest": {
-        const local = await this.engine.buildManifest();
+        // Only advertise what the sync scope allows — an omitted file reads
+        // as "nothing to pull" on the client, never as a deletion.
+        const local = await this.engine.buildManifestScoped(this.getScope());
         return newMessage("manifest", msg.request_id, manifestToWire(local));
       }
 
       case "file_request": {
         const req = msg.payload as FileRequestPayload;
+        if (!allows(this.getScope(), req.relative_path)) {
+          return ack(false, `${req.relative_path} is not in the sync scope`);
+        }
         // A file can disappear between the manifest exchange and the chunk
         // request (e.g. the authoritative server just tombstoned it, or a
         // background watcher moved it). Reply with an ack error instead of
@@ -263,6 +285,12 @@ export class SyncServer {
     op: SyncOperationPayload
   ): Promise<ProtocolMessage> {
     const path = op.relative_path;
+    if (!allows(this.getScope(), path)) {
+      // Out-of-scope push/delete: refuse without touching anything. HTTP is
+      // per-message request/response, so unlike the TCP server there is no
+      // framing to keep aligned — a plain nack suffices.
+      return ack(false, `${path} is not in the sync scope`);
+    }
     if (op.operation_type === 2) {
       await this.engine.applyOperation({ op: "delete", path });
       return ack(true);
