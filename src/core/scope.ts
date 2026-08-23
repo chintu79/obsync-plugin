@@ -86,3 +86,26 @@ export function parseScope(raw: unknown): Scope {
     : [];
   return { entries, excludes };
 }
+
+/** How the user wants selection to behave. "everything" is the zero-config
+ *  default (whole vault minus exclusions); "selected" syncs only picked
+ *  files/folders, minus exclusions. */
+export type ScopeMode = "everything" | "selected";
+
+/** Build the local scope from persisted pieces. Old saves (excludes only,
+ *  no mode) degrade to the whole-vault behavior they were written with. */
+export function effectiveLocalScope(
+  mode: ScopeMode,
+  entries: ScopeEntry[],
+  excludes: string[]
+): Scope {
+  const ex = excludes.map(normalize);
+  if (mode !== "selected") return { entries: [], excludes: ex };
+  return { entries: parseScope({ entries }).entries, excludes: ex };
+}
+
+/** True when a direct folder entry covers `folderPath`. */
+export function hasFolderEntry(scope: Scope, folderPath: string): boolean {
+  const p = normalize(folderPath);
+  return scope.entries.some((e) => e.kind === "folder" && e.path === p);
+}

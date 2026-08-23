@@ -16,7 +16,9 @@ import { newMessage } from "../src/core/protocol";
 import {
   Scope,
   allows,
+  effectiveLocalScope,
   everythingScope,
+  hasFolderEntry,
   isEverything,
   mergeScopes,
   parseScope,
@@ -151,6 +153,57 @@ function clientExcluding(...paths: string[]): Scope {
   return { entries: [], excludes: paths };
 }
 
+describe("sync selection mode", () => {
+  it("everything mode ignores picked entries (zero-config default)", () => {
+    const s = effectiveLocalScope(
+      "everything",
+      [{ kind: "folder", path: "notes" }],
+      ["a.md"]
+    );
+    expect(s.entries).toEqual([]);
+    expect(allows(s, "anything.md")).toBe(true);
+    expect(allows(s, "a.md")).toBe(false);
+  });
+
+  it("selected mode syncs only what is picked, minus exclusions", () => {
+    const s = effectiveLocalScope(
+      "selected",
+      [
+        { kind: "folder", path: "notes" },
+        { kind: "file", path: "top.md" },
+      ],
+      ["notes/secret.md"]
+    );
+    expect(allows(s, "notes/hello.md")).toBe(true);
+    expect(allows(s, "notes/secret.md")).toBe(false); // exclusion overrides folder
+    expect(allows(s, "top.md")).toBe(true);
+    expect(allows(s, "other/unpicked.md")).toBe(false);
+  });
+
+  it("old saves without a mode degrade to whole-vault behavior", () => {
+    const s = effectiveLocalScope("everything", [], []);
+    expect(isEverything(s)).toBe(true);
+  });
+
+  it("junk entries are filtered out rather than hiding files", () => {
+    const s = effectiveLocalScope(
+      "selected",
+      // @ts-expect-error simulating corrupt saved data
+      [{ kind: "bogus", path: "x.md" }, "not-an-object"],
+      []
+    );
+    expect(s.entries).toEqual([]);
+  });
+
+  it("hasFolderEntry matches direct entries only", () => {
+    const s: Scope = { entries: [{ kind: "folder", path: "notes" }], excludes: [] };
+    expect(hasFolderEntry(s, "notes")).toBe(true);
+    expect(hasFolderEntry(s, "notes\\sub")).toBe(false); // not the same entry
+    expect(hasFolderEntry(s, "other")).toBe(false);
+    expect(hasFolderEntry({ entries: [{ kind: "file", path: "notes" }], excludes: [] }, "notes")).toBe(false);
+  });
+});
+
 describe("per-file sync selection over the wire", () => {
   beforeEach(async () => {
     serverScope = everythingScope();
@@ -236,5 +289,23 @@ describe("per-file sync selection over the wire", () => {
     );
     expect(reply.message_type).toBe("operation_ack");
     expect((reply.payload as { ok: boolean }).ok).toBe(false);
+  });
+});
+
+describe("folder selection over the wire", () => {
+  it("a folder entry pulls everything under it and nothing outside", async () => {
+    await startServer();
+    // Give the server a file outside notes/ to prove the boundary.
+    const extra = path.join(serverVault.root, "outside.md");
+    fs.writeFileSync(extra, "not in the folder");
+    await serverVault.engine.refreshIndex(false);
+
+    const client = await makeVault("client", {});
+    const scope = effectiveLocalScope("selected", [{ kind: "folder", path: "notes" }], []);
+    const report = await runClientSession(client.engine, HttpClientTransport.forNode(url), undefined, scope);
+
+    expect(report.pulled_files).toBe(3); // hello, ideas, secret — not outside.md
+    expect(fs.readFileSync(path.join(client.root, "notes/ideas.md"), "utf8")).toBe("server idea");
+    expect(fs.existsSync(path.join(client.root, "outside.md"))).toBe(false);
   });
 });

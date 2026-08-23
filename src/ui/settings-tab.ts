@@ -146,11 +146,59 @@ export class ObsyncSettingsTab extends PluginSettingTab {
         })
       );
 
+    this.renderSyncSelection();
     this.renderExcludedFiles();
 
     void this.renderPairing();
     void this.renderConflicts();
     void this.renderSnapshots();
+  }
+
+  /** Selection mode + the picked files/folders in "selected" mode. */
+  private renderSyncSelection(): void {
+    const { containerEl } = this;
+    new Setting(containerEl).setName("Sync selection").setHeading();
+    new Setting(containerEl)
+      .setName("What syncs")
+      .setDesc(
+        "\"Everything\" syncs the whole vault (minus excluded files). \"Only what I pick\" syncs just the files and folders you mark — right-click them in the vault."
+      )
+      .addDropdown((d) =>
+        d
+          .addOption("everything", "Everything")
+          .addOption("selected", "Only what I pick")
+          .setValue(this.plugin.getScopeMode())
+          .onChange(async (v) => {
+            await this.plugin.setScopeMode(v === "selected" ? "selected" : "everything");
+            this.display();
+          })
+      );
+    if (this.plugin.getScopeMode() === "selected") {
+      const entries = this.plugin.includedPaths();
+      if (entries.length === 0) {
+        containerEl.createEl("p", {
+          text: "Nothing picked yet: right-click a file and choose \"Sync this file\", or right-click a folder and choose \"Sync this folder\". Nothing syncs until you pick something.",
+          cls: "setting-item-description",
+        });
+      } else {
+        containerEl.createEl("p", {
+          text: "Picked files and folders. A folder also covers files created under it later.",
+          cls: "setting-item-description",
+        });
+        for (const e of entries) {
+          new Setting(containerEl)
+            .setName(e.kind === "folder" ? e.path + "/" : e.path)
+            .setDesc(e.kind === "folder" ? "folder" : "")
+            .addButton((b) =>
+              b.setButtonText("Remove").onClick(async () => {
+                await this.plugin.removeInclude(e.path);
+                await this.plugin.syncNow(true);
+                this.display();
+              })
+            );
+        }
+      }
+    }
   }
 
   /** Per-file exclusions, managed from the file menu ("Don't sync this file"). */
@@ -160,7 +208,10 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     new Setting(containerEl).setName("Excluded files").setHeading();
     if (files.length === 0) {
       containerEl.createEl("p", {
-        text: "Every file syncs. Right-click a file and choose \"Don't sync this file\" to keep it on this device only.",
+        text:
+          this.plugin.getScopeMode() === "selected"
+            ? "No exclusions. Right-click a synced file and choose \"Don't sync this file\" to keep it on this device only."
+            : "Every file syncs. Right-click a file and choose \"Don't sync this file\" to keep it on this device only.",
         cls: "setting-item-description",
       });
       return;

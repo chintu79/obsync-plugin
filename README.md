@@ -186,21 +186,30 @@ Everything lives under **Settings → Obsync**:
 | **Server address (advanced)** (mobile) | Manual server URL (normalized); leave empty to auto-discover again |
 | **Auto-sync** | Sync on vault changes and (on mobile) poll the server every interval |
 | **Sync now** | Force a session on demand (also available via the ribbon icon and the command palette) |
-| **Excluded files** | Files kept out of sync (see below) |
+| **Sync selection** | Everything, or only files/folders you pick (see below) |
+| **Excluded files** | Files kept out of sync in either mode |
 | **Devices** | Approved devices, pending approval requests, revoke access |
 | **Conflicts** | Files changed on both sides — resolve per file: keep local / keep remote / keep both |
 | **Versions** | Snapshot history of every file; restore any past version |
 
 ## Per-file sync selection
 
-Right-click any file and choose **Don't sync this file** to keep it on that
-device only (choose **Sync this file** to undo). Excluded files are never
-pulled, pushed, or deleted by sync — they stay on disk untouched, and
-re-including a file resumes from the last version both sides agreed on, so no
-conflicts are manufactured. The list is managed under **Settings → Obsync →
-Excluded files**. Folders can be scoped per device from the desktop
-dashboard's *Sync scope* card; a file exclusion always wins over a folder
-rule.
+Two ways to control what syncs, under **Settings → Obsync → Sync selection**:
+
+- **Everything** (default): the whole vault syncs. Right-click any file and
+  choose **Don't sync this file** to keep it on that device only — excluded
+  files are never pulled, pushed, or deleted, stay on disk untouched, and
+  re-including resumes from the last agreed version.
+- **Only what I pick**: nothing syncs until you mark it — right-click a file
+  for **Sync this file**, or a folder for **Sync this folder**. A folder pick
+  also covers files created under it later. "Don't sync this file" still
+  works inside picked folders as an override.
+
+Both modes share the same rules: selection is a pure filter over the index,
+so picking and unpicking never touches file content, and re-including a file
+resumes from the last version both sides agreed on without manufacturing
+conflicts. Folders can also be scoped per device from the desktop dashboard's
+*Sync scope* card; a file exclusion always wins over any folder rule.
 
 ## How sync is triggered
 

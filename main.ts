@@ -17,7 +17,13 @@ import { ObsyncOnboardingModal } from "./src/ui/onboarding";
 import { DeviceIdentity, type StoredDeviceIdentity } from "./src/core/identity";
 import { ObsyncSettingsTab } from "./src/ui/settings-tab";
 import { VaultAdapter } from "./src/core/vault";
-import type { Scope } from "./src/core/scope";
+import type { Scope, ScopeEntry, ScopeMode } from "./src/core/scope";
+import {
+  allows,
+  effectiveLocalScope,
+  hasFolderEntry,
+  parseScope,
+} from "./src/core/scope";
 
 const DEFAULT_PORT = 42042;
 
@@ -53,6 +59,11 @@ export default class ObsyncPlugin extends Plugin {
   /** Per-file exclusions ("don't sync this file"). Pure filter: excluded
    *  files stay on disk and re-including resumes the last agreement. */
   private syncExcludes = new Set<string>();
+  /** "everything" (default) = whole vault minus exclusions; "selected" =
+   *  only picked files/folders, minus exclusions. */
+  private scopeMode: ScopeMode = "everything";
+  /** Picked files/folders for "selected" mode. */
+  private scopeEntries: ScopeEntry[] = [];
 
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
@@ -83,6 +94,8 @@ export default class ObsyncPlugin extends Plugin {
       autoSyncEnabled?: boolean;
       autoSyncIntervalMs?: number;
       scopeExcludes?: string[];
+      scopeMode?: string;
+      scopeEntries?: ScopeEntry[];
     } | null;
     if (saved?.identity) {
       this.identity = DeviceIdentity.fromStored(saved.identity);
@@ -98,6 +111,8 @@ export default class ObsyncPlugin extends Plugin {
     if (Array.isArray(saved?.scopeExcludes)) {
       this.syncExcludes = new Set(saved.scopeExcludes.map(normalizePath));
     }
+    if (saved?.scopeMode === "selected") this.scopeMode = "selected";
+    this.scopeEntries = parseScope({ entries: saved?.scopeEntries }).entries;
 
     // Probe client for zero-config discovery (mobile path; harmless on desktop).
     this.probeFn = obsidianProbe((param) => requestUrl(param));
@@ -173,32 +188,17 @@ export default class ObsyncPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("modify", () => this.scheduleAutoSync()));
     this.registerEvent(this.app.vault.on("delete", () => this.scheduleAutoSync()));
 
-    // Per-file sync toggle in the file menu ("Don't sync this file" /
-    // "Sync this file"). Exclusion is a pure filter — the file stays on disk.
+    // Per-file/per-folder sync selection in the menus. Exclusion is a pure
+    // filter (the file stays on disk); inclusion only bites in "selected"
+    // mode, where a folder entry also covers future files under it.
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
-        if (!("extension" in file)) return; // files only, not folders
         const path = normalizePath(file.path);
-        const excluded = this.syncExcludes.has(path);
-        menu.addItem((item) =>
-          item
-            .setTitle(excluded ? "Sync this file" : "Don't sync this file")
-            .setIcon(excluded ? "eye" : "eye-off")
-            .onClick(async () => {
-              if (excluded) {
-                this.syncExcludes.delete(path);
-              } else {
-                this.syncExcludes.add(path);
-              }
-              await this.saveScope();
-              new Notice(
-                excluded
-                  ? `Obsync: syncing ${path} again`
-                  : `Obsync: not syncing ${path} (it stays on this device)`
-              );
-              void this.syncNow(true);
-            })
-        );
+        if ("extension" in file) {
+          this.addFileSyncMenuItem(menu, path);
+        } else if (this.scopeMode === "selected") {
+          this.addFolderSyncMenuItem(menu, path);
+        }
       })
     );
 
@@ -392,14 +392,22 @@ export default class ObsyncPlugin extends Plugin {
 
   /** This side's sync scope: whole vault minus per-file exclusions. */
   localScope(): Scope {
-    return { entries: [], excludes: [...this.syncExcludes].sort() };
+    return effectiveLocalScope(
+      this.scopeMode,
+      this.scopeEntries,
+      [...this.syncExcludes].sort()
+    );
   }
 
-  /** Persist the exclusion list. */
+  /** Persist mode, picked entries, and exclusions. */
   async saveScope(): Promise<void> {
     await this.saveData({
       ...(await this.loadData()),
       scopeExcludes: [...this.syncExcludes].sort(),
+      scopeMode: this.scopeMode,
+      scopeEntries: [...this.scopeEntries].sort((a, b) =>
+        a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind.localeCompare(b.kind)
+      ),
     });
   }
 
@@ -413,6 +421,99 @@ export default class ObsyncPlugin extends Plugin {
     if (excluded) this.syncExcludes.add(p);
     else this.syncExcludes.delete(p);
     await this.saveScope();
+  }
+
+  getScopeMode(): ScopeMode {
+    return this.scopeMode;
+  }
+
+  async setScopeMode(mode: ScopeMode): Promise<void> {
+    if (mode === this.scopeMode) return;
+    this.scopeMode = mode;
+    await this.saveScope();
+    void this.syncNow(true);
+  }
+
+  /** Picked files/folders for "selected" mode, sorted for display. */
+  includedPaths(): ScopeEntry[] {
+    return [...this.scopeEntries].sort((a, b) =>
+      a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind.localeCompare(b.kind)
+    );
+  }
+
+  async addInclude(path: string, kind: ScopeEntry["kind"]): Promise<void> {
+    const p = normalizePath(path);
+    if (!this.scopeEntries.some((e) => e.kind === kind && e.path === p)) {
+      this.scopeEntries.push({ kind, path: p });
+    }
+    await this.saveScope();
+  }
+
+  async removeInclude(path: string): Promise<void> {
+    const p = normalizePath(path);
+    this.scopeEntries = this.scopeEntries.filter((e) => e.path !== p);
+    await this.saveScope();
+  }
+
+  /** File-menu item: toggle the file between synced and device-only. */
+  private addFileSyncMenuItem(menu: any, path: string): void {
+    const scope = this.localScope();
+    const allowed = allows(scope, path);
+    menu.addItem((item: any) =>
+      item
+        .setTitle(allowed ? "Don't sync this file" : "Sync this file")
+        .setIcon(allowed ? "eye-off" : "eye")
+        .onClick(async () => {
+          if (allowed) {
+            // Exclusions win over folder entries, so this works in both modes.
+            this.syncExcludes.add(path);
+          } else {
+            this.syncExcludes.delete(path);
+            // In selected mode make it part of the pick unless a covering
+            // entry already allows it.
+            if (this.scopeMode === "selected") {
+              const without = effectiveLocalScope(
+                this.scopeMode,
+                this.scopeEntries,
+                [...this.syncExcludes].sort()
+              );
+              if (!allows(without, path)) await this.addInclude(path, "file");
+            }
+          }
+          await this.saveScope();
+          new Notice(
+            allowed
+              ? `Obsync: not syncing ${path} (it stays on this device)`
+              : `Obsync: syncing ${path}`
+          );
+          void this.syncNow(true);
+        })
+    );
+  }
+
+  /** Folder-menu item ("selected" mode only): include or drop a whole
+   *  folder. A folder entry also covers future files created under it. */
+  private addFolderSyncMenuItem(menu: any, path: string): void {
+    const included = hasFolderEntry(this.localScope(), path);
+    menu.addItem((item: any) =>
+      item
+        .setTitle(included ? "Don't sync this folder" : "Sync this folder")
+        .setIcon(included ? "eye-off" : "eye")
+        .onClick(async () => {
+          if (included) {
+            await this.removeInclude(path);
+          } else {
+            await this.removeInclude(path); // clean up stray same-path file entry
+            await this.addInclude(path, "folder");
+          }
+          new Notice(
+            included
+              ? `Obsync: not syncing ${path}/ anymore`
+              : `Obsync: syncing ${path}/`
+          );
+          void this.syncNow(true);
+        })
+    );
   }
 
   async toggleServer(): Promise<void> {
