@@ -41,7 +41,13 @@ export async function runClientSession(
   });
   const helloReply = await transport.exchange(helloMsg);
   if (helloReply.message_type !== "hello_ack") {
-    throw new Error("expected HelloAck from server");
+    throw new Error(
+      `expected HelloAck from server, got ${helloReply.message_type}${
+        (helloReply.payload as { error?: string })?.error
+          ? `: ${(helloReply.payload as { error?: string }).error}`
+          : ""
+      }`
+    );
   }
   const ack = helloReply.payload as HelloAckPayload;
   if (!ack.approved) {

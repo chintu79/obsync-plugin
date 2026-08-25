@@ -242,8 +242,12 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     switch (this.plugin.connectionStatus) {
       case "connecting":
         return "Connecting…";
-      case "connected":
-        return "Connected.";
+      case "connected": {
+        const code = this.plugin.getVerifyCode();
+        return code
+          ? `Connected. Verification code: ${code} (must match the desktop's).`
+          : "Connected.";
+      }
       case "not_found":
         return "Server not found — retry, or enter the address manually below.";
       default:
@@ -265,10 +269,16 @@ export class ObsyncSettingsTab extends PluginSettingTab {
     const pending = await pairing.pendingDevices();
     if (pending.length > 0) {
       new Setting(containerEl).setName("Awaiting approval").setHeading();
+      containerEl.createEl("p", {
+        text: "Compare the verification code with the number shown on the other device BEFORE approving. If the codes differ, someone is between the two devices — reject.",
+        cls: "setting-item-description",
+      });
       for (const p of pending) {
         new Setting(containerEl)
           .setName(`${p.device_name} wants to pair`)
-          .setDesc(`${p.fingerprint} · device ${p.device_id.slice(0, 8)}`)
+          .setDesc(
+            `Verification code: ${p.sas_code} · fingerprint ${p.fingerprint}`
+          )
           .addButton((b) =>
             b
               .setButtonText("Approve")

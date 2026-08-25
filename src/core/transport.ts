@@ -1,5 +1,7 @@
 import { ProtocolMessage, newMessage, PROTOCOL_VERSION } from "./protocol";
 import { NetworkError } from "./errors";
+import { DeviceIdentity } from "./identity";
+import { RpcSession } from "./secure";
 
 export const DEFAULT_PORT = 42042;
 export const RPC_PATH = "/rpc";
@@ -59,15 +61,27 @@ function exchangeTimeout(ms: number): Promise<never> {
  * (global fetch, tests) and in Obsidian (mobile `requestUrl`, desktop via
  * `requestUrl`/`require('http')`). We never assume the ambient `fetch` exists
  * on Capacitor.
+ *
+ * When constructed with a `DeviceIdentity`, every session is sealed: hello
+ * negotiates X25519 keys, later messages travel as AES-256-GCM envelopes.
  */
 export class HttpClientTransport implements HttpTransport {
+  private secure: RpcSession | null = null;
+
   constructor(
     private url: string,
     private post: (url: string, body: string) => Promise<string>,
-    private timeoutMs = 15000
-  ) {}
+    private timeoutMs = 15000,
+    identity?: DeviceIdentity
+  ) {
+    if (identity) this.secure = new RpcSession(identity);
+  }
 
-  static forNode(url: string, timeoutMs?: number): HttpClientTransport {
+  static forNode(
+    url: string,
+    timeoutMs?: number,
+    identity?: DeviceIdentity
+  ): HttpClientTransport {
     return new HttpClientTransport(url, async (u, body) => {
       const resp = await globalThis.fetch(u, {
         method: "POST",
@@ -79,16 +93,16 @@ export class HttpClientTransport implements HttpTransport {
         throw NetworkError.connection(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
       }
       return resp.text();
-    }, timeoutMs);
+    }, timeoutMs, identity);
   }
 
   async exchange(msg: ProtocolMessage): Promise<ProtocolMessage> {
-    const body = encodeMessage(msg);
+    const body = this.secure ? await this.secure.outgoing(msg) : encodeMessage(msg);
     const result = await Promise.race([
       this.post(this.url, body),
       exchangeTimeout(this.timeoutMs),
     ]);
-    return decodeMessage(result);
+    return this.secure ? await this.secure.incoming(result) : decodeMessage(result);
   }
 
   async close(): Promise<void> {}
@@ -101,6 +115,8 @@ export class HttpClientTransport implements HttpTransport {
  * can also use Node `fetch`/`http`, but on mobile this is the only option.
  */
 export class RequestUrlTransport implements HttpTransport {
+  private secure: RpcSession | null = null;
+
   constructor(
     private url: string,
     private requestUrlFn: (param: {
@@ -111,11 +127,14 @@ export class RequestUrlTransport implements HttpTransport {
       headers?: Record<string, string>;
       throw: boolean;
     }) => Promise<{ status: number; text: string; arrayBuffer: ArrayBuffer }>,
-    private timeoutMs = 15000
-  ) {}
+    private timeoutMs = 15000,
+    identity?: DeviceIdentity
+  ) {
+    if (identity) this.secure = new RpcSession(identity);
+  }
 
   async exchange(msg: ProtocolMessage): Promise<ProtocolMessage> {
-    const body = encodeMessage(msg);
+    const body = this.secure ? await this.secure.outgoing(msg) : encodeMessage(msg);
     const result = await Promise.race([
       (async () => {
         const resp = await this.requestUrlFn({
@@ -134,7 +153,7 @@ export class RequestUrlTransport implements HttpTransport {
       })(),
       exchangeTimeout(this.timeoutMs),
     ]);
-    return decodeMessage(result);
+    return this.secure ? await this.secure.incoming(result) : decodeMessage(result);
   }
 
   async close(): Promise<void> {}
@@ -170,6 +189,21 @@ export async function startRpcServer(
   handler: MessageHandler,
   port: number = DEFAULT_PORT
 ): Promise<HttpServerHandle> {
+  return startRawRpcServer(
+    async (body) => encodeMessage(await handler(decodeMessage(body), { remoteAddress: "" })),
+    port
+  );
+}
+
+/**
+ * Like {@link startRpcServer} but the handler owns the raw request/response
+ * bodies — the SecureGate needs this to distinguish sealed envelopes from
+ * plaintext handshakes.
+ */
+export async function startRawRpcServer(
+  rawHandler: (body: string) => Promise<string>,
+  port: number = DEFAULT_PORT
+): Promise<HttpServerHandle> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports -- lazy require("http") is Node-only and never evaluated on mobile; Obsidian's renderer resolves ES dynamic imports as URLs and fails with "Failed to fetch dynamically imported module"
   const http = require("http") as typeof import("http");
   const server = http.createServer((req, res) => {
@@ -189,11 +223,9 @@ export async function startRpcServer(
     req.on("end", () => {
       void (async () => {
         try {
-          const msg = decodeMessage(body);
-          const ctx: ServerRequestContext = { remoteAddress: req.socket.remoteAddress ?? "" };
-          const reply = await handler(msg, ctx);
+          const reply = await rawHandler(body);
           res.writeHead(200, { "content-type": "application/json" });
-          res.end(encodeMessage(reply));
+          res.end(reply);
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { "content-type": "text/plain" });

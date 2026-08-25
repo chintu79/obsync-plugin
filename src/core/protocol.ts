@@ -33,14 +33,20 @@ export interface HelloPayload {
   device_name: string;
   protocol_version: number;
   public_key_fingerprint: string;
+  /** X25519 client public key (hex) — binds the session to this identity. */
+  client_public_key?: string;
+  /** Fresh 16-byte client nonce (hex) mixed into the session key. */
+  client_nonce?: string;
 }
 
 export interface HelloAckPayload {
   approved: boolean;
   server_device_id: string;
   server_device_name: string;
-  /** X25519 server public key (hex) — Phase 3 pairs the key agreement. */
+  /** X25519 server public key (hex) — the key-agreement peer. */
   server_public_key: string;
+  /** Fresh 16-byte server nonce (hex); present when the session is sealed. */
+  server_nonce?: string;
 }
 
 /** Mobile → desktop: request pairing (before any sync session). */
@@ -50,6 +56,8 @@ export interface PairRequestPayload {
   /** X25519 client public key (hex) for key agreement. */
   client_public_key: string;
   fingerprint: string;
+  /** Fresh 16-byte client nonce (hex), injected by the secure transport. */
+  client_nonce?: string;
 }
 
 /** Desktop → mobile: pairing approved or rejected. */
@@ -61,6 +69,15 @@ export interface PairAckPayload {
   /** Established AES-256-GCM session key, encrypted to the client's public key
    * (hex). Empty until Phase 3's key agreement is wired. */
   session_key_enc: string;
+  /** Fresh 16-byte server nonce (hex); present when the reply establishes a
+   * sealed session. */
+  server_nonce?: string;
+  /**
+   * Short Authentication String (6 digits) derived symmetrically from the
+   * ECDH secret. Shown on both devices; the user compares them before
+   * approving. Equal codes prove no man-in-the-middle sat between the two.
+   */
+  sas_code?: string;
 }
 
 export interface FileRequestPayload {

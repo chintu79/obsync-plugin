@@ -97,8 +97,9 @@ Laptop (authoritative)                  Phone (additive client)
 ```
 
 The laptop runs an RPC server on port `42042`; the phone (and the laptop's own
-"Sync now") talk to it over plain HTTP `POST /rpc` — one protocol message per
-request, the reply is the next message.
+"Sync now") talk to it over HTTP `POST /rpc` — one protocol message per
+request, the reply is the next message. Every message after the handshake
+travels inside an **encrypted envelope** (see [Security model](#security-model)).
 
 ### Pairing a new device
 
@@ -172,6 +173,33 @@ stall the rest of the session.
 > content hash the last sync agreed on). A conflict is flagged only when **both**
 > sides changed since that agreement. See
 > [`src/core/conflict.ts`](src/core/conflict.ts).
+
+## Security model
+
+Anyone on the same network can address the sync port, so Obsync treats the
+network as hostile and derives trust from cryptography instead:
+
+- **Long-term identity keys.** Every device generates an X25519 keypair at
+  first run (`.obsync/identity.json`). The 8-byte SHA-256 prefix of the public
+  key is the *fingerprint* shown during pairing — approvals are bound to this
+  fingerprint, never to a self-claimed device id.
+- **Sealed sessions.** A client proves approval by completing a static-static
+  ECDH against the server's identity key: `hello` carries the client's public
+  key and a fresh nonce, the server replies with its own nonce, and both sides
+  derive the same AES-256-GCM key via HKDF-SHA256. Every following message is a
+  sealed envelope `{token, sequence, iv, ciphertext}` with an ever-increasing
+  sequence number (replay protection) and the token+sequence bound as AEAD
+  associated data (tamper protection).
+- **No unauthenticated surface.** Only `ping` (stateless discovery) is answered
+  without a session; everything else gets `authentication required`. An
+  unapproved key never receives a session, so it cannot read even the manifest.
+- **Pairing verification code.** During first pairing both screens show the
+  same 6-digit code derived from the ECDH secret. Compare them before clicking
+  Approve — a match proves the peer holds the approved private key and rules
+  out man-in-the-middle pairing on a hostile network.
+- **Known trade-off:** traffic is encrypted but not anonymous — a network
+  observer can still see that two devices talk to each other and how much data
+  moves. Metadata (file names) is only visible to session holders.
 
 ## Settings reference
 

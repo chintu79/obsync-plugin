@@ -4,14 +4,16 @@ import { Store } from "./src/core/store";
 import { SyncEngine } from "./src/core/engine";
 import { SyncServer, runClientSession } from "./src/core/session";
 import { PairingClient, PairingServer } from "./src/core/pairing";
+import type { PairAckPayload } from "./src/core/protocol";
 import { newMessage } from "./src/core/protocol";
 import {
   RequestUrlTransport,
-  startRpcServer,
+  startRawRpcServer,
   HttpServerHandle,
   RPC_PATH,
   normalizeServerUrl,
 } from "./src/core/transport";
+import { SecureGate } from "./src/core/secure";
 import { discoverServer, obsidianProbe, type ServerProbe } from "./src/core/discovery";
 import { ObsyncOnboardingModal } from "./src/ui/onboarding";
 import { DeviceIdentity, type StoredDeviceIdentity } from "./src/core/identity";
@@ -64,6 +66,9 @@ export default class ObsyncPlugin extends Plugin {
   private scopeMode: ScopeMode = "everything";
   /** Picked files/folders for "selected" mode. */
   private scopeEntries: ScopeEntry[] = [];
+  /** Pairing verification code shown on this device (SAS from the ECDH
+   *  secret). Equal to the desktop's code iff the pairing is uncompromised. */
+  private verifyCode = "";
 
   async onload() {
     this.addRibbonIcon("refresh-ccw", "Obsync", () => this.syncNow());
@@ -96,6 +101,7 @@ export default class ObsyncPlugin extends Plugin {
       scopeExcludes?: string[];
       scopeMode?: string;
       scopeEntries?: ScopeEntry[];
+      verifyCode?: string;
     } | null;
     if (saved?.identity) {
       this.identity = DeviceIdentity.fromStored(saved.identity);
@@ -113,6 +119,7 @@ export default class ObsyncPlugin extends Plugin {
     }
     if (saved?.scopeMode === "selected") this.scopeMode = "selected";
     this.scopeEntries = parseScope({ entries: saved?.scopeEntries }).entries;
+    if (typeof saved?.verifyCode === "string") this.verifyCode = saved.verifyCode;
 
     // Probe client for zero-config discovery (mobile path; harmless on desktop).
     this.probeFn = obsidianProbe((param) => requestUrl(param));
@@ -149,11 +156,12 @@ export default class ObsyncPlugin extends Plugin {
       // few times before giving up.
       if (!this.server) {
         const pairing = this.pairing;
+        const gate = new SecureGate(pairing);
         let lastErr: unknown = null;
         for (let attempt = 0; attempt < 5 && !this.server; attempt++) {
           try {
-            this.server = await startRpcServer(
-              (msg) => pairing.handle(msg),
+            this.server = await startRawRpcServer(
+              (body) => gate.handleBody(body),
               DEFAULT_PORT
             );
           } catch (e) {
@@ -427,6 +435,25 @@ export default class ObsyncPlugin extends Plugin {
     return this.scopeMode;
   }
 
+  /** Derive + persist the pairing verification code for this server. */
+  private async rememberVerifyCode(
+    pair: PairingClient,
+    serverPublicKeyHex: string
+  ): Promise<void> {
+    const code = pair.verifyCodeFor(serverPublicKeyHex);
+    if (code === this.verifyCode) return;
+    this.verifyCode = code;
+    await this.saveData({
+      ...(await this.loadData()),
+      verifyCode: code,
+    });
+  }
+
+  /** The pairing verification code to compare with the other device. */
+  getVerifyCode(): string {
+    return this.verifyCode;
+  }
+
   async setScopeMode(mode: ScopeMode): Promise<void> {
     if (mode === this.scopeMode) return;
     this.scopeMode = mode;
@@ -528,7 +555,8 @@ export default class ObsyncPlugin extends Plugin {
     }
     if (!this.pairing) return;
     try {
-      this.server = await startRpcServer((msg) => this.pairing!.handle(msg), DEFAULT_PORT);
+      const gate = new SecureGate(this.pairing);
+      this.server = await startRawRpcServer((body) => gate.handleBody(body), DEFAULT_PORT);
       new Notice(`Obsync server listening on :${this.server.port}`);
     } catch (e) {
       new Notice(`Could not start server: ${e instanceof Error ? e.message : e}`);
@@ -560,15 +588,21 @@ export default class ObsyncPlugin extends Plugin {
     const url = `http://127.0.0.1:${this.server.port}${RPC_PATH}`;
     // Use requestUrl (not global fetch): Obsidian's renderer has no reliable
     // fetch for loopback, and requestUrl works identically on desktop + mobile.
-    const transport = new RequestUrlTransport(url, (param) => {
-      return requestUrl({
-        url: param.url,
-        method: param.method,
-        contentType: param.contentType,
-        body: param.body,
-        throw: false,
-      });
-    });
+    // The identity seals every session (X25519 + AES-GCM envelopes).
+    const transport = new RequestUrlTransport(
+      url,
+      (param) => {
+        return requestUrl({
+          url: param.url,
+          method: param.method,
+          contentType: param.contentType,
+          body: param.body,
+          throw: false,
+        });
+      },
+      15000,
+      this.identity!
+    );
     this.statusBarEl?.setText("Obsync: syncing…");
     try {
       const report = await runClientSession(this.engine, transport, undefined, this.localScope());
@@ -593,24 +627,35 @@ export default class ObsyncPlugin extends Plugin {
       return;
     }
     const url = `${normalizeServerUrl(this.serverUrl)}${RPC_PATH}`;
-    const transport = new RequestUrlTransport(url, (param) => {
-      return requestUrl({
-        url: param.url,
-        method: param.method,
-        contentType: param.contentType,
-        body: param.body,
-        throw: false,
-      });
-    });
+    const transport = new RequestUrlTransport(
+      url,
+      (param) => {
+        return requestUrl({
+          url: param.url,
+          method: param.method,
+          contentType: param.contentType,
+          body: param.body,
+          throw: false,
+        });
+      },
+      15000,
+      this.identity!
+    );
 
     // Pair (idempotent: pair_ack returns approved status for known devices).
     const pair = new PairingClient(this.identity);
     const pairReply = await transport.exchange(
       newMessage("pair_request", 0, pair.buildPairRequest())
     );
-    if (pairReply.message_type === "pair_ack" && !(pairReply.payload as { approved: boolean }).approved) {
-      if (!quiet) new Notice("Obsync: device not approved by the desktop. Ask the desktop user to approve.");
-      return;
+    if (pairReply.message_type === "pair_ack") {
+      const p = pairReply.payload as PairAckPayload & { approved: boolean };
+      if (!p.approved) {
+        if (!quiet) new Notice("Obsync: device not approved by the desktop. Ask the desktop user to approve.");
+        // Show the code to compare while waiting for approval.
+        if (p.server_public_key) await this.rememberVerifyCode(pair, p.server_public_key);
+        return;
+      }
+      if (p.server_public_key) await this.rememberVerifyCode(pair, p.server_public_key);
     }
 
     // Mobile is additive: never tombstone phantom deletions.
